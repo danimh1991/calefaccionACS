@@ -4,7 +4,8 @@ export type PeriodInputs = {
   dwellingCount: number;
   invoiceTotal: number;
   fixedCostTotal: number;
-  actualFixedDailyRate: number;
+  actualFixedRevenue: number;
+  actualFixedPerDwelling: number;
   additionalFixedCost: number;
   heatingUsage: number;
   coolingUsage: number;
@@ -42,28 +43,26 @@ export function calculatePeriod(inputs: PeriodInputs) {
   const waterM3 = inputs.waterLitres / 1000;
   const thermalUsage = inputs.heatingUsage + inputs.coolingUsage;
   const targetCost = inputs.invoiceTotal + inputs.additionalFixedCost;
-  const calculatedFixedRevenue = inputs.fixedCostTotal;
-  const actualFixedRevenue = inputs.actualFixedDailyRate * inputs.dwellingCount * days;
   const calculatedWaterRevenue = waterM3 * inputs.calculatedWaterRate;
   const remainingThermalCost =
-    targetCost - calculatedFixedRevenue - calculatedWaterRevenue;
+    targetCost - inputs.actualFixedRevenue - calculatedWaterRevenue;
   const calculatedThermalRate = thermalUsage === 0 ? 0 : remainingThermalCost / thermalUsage;
   const actualRevenue =
     inputs.heatingUsage * inputs.actualHeatingRate +
     inputs.coolingUsage * inputs.actualCoolingRate +
     waterM3 * inputs.actualWaterRate +
-    actualFixedRevenue;
+    inputs.actualFixedRevenue;
   const calculatedRevenue =
     thermalUsage * calculatedThermalRate +
     calculatedWaterRevenue +
-    calculatedFixedRevenue;
+    inputs.actualFixedRevenue;
 
   return {
     days,
     waterM3,
     thermalUsage,
     fixedCostTotal: inputs.fixedCostTotal,
-    actualFixedRevenue,
+    actualFixedRevenue: inputs.actualFixedRevenue,
     additionalFixedCost: inputs.additionalFixedCost,
     targetCost,
     calculatedThermalRate,
@@ -81,8 +80,7 @@ export function calculateDwelling(
   days: number,
 ) {
   const waterM3 = usage.waterLitres / 1000;
-  const actualFixedPerDwelling = inputs.actualFixedDailyRate * days;
-  const calculatedFixedPerDwelling = inputs.dwellingCount ? inputs.fixedCostTotal / inputs.dwellingCount : 0;
+  const actualFixedPerDwelling = inputs.actualFixedPerDwelling;
   const actual =
     usage.heating * inputs.actualHeatingRate +
     usage.cooling * inputs.actualCoolingRate +
@@ -91,6 +89,6 @@ export function calculateDwelling(
   const calculated =
     (usage.heating + usage.cooling) * thermalRate +
     waterM3 * inputs.calculatedWaterRate +
-    calculatedFixedPerDwelling;
+    actualFixedPerDwelling;
   return { ...usage, waterM3, actual, calculated, difference: calculated - actual };
 }

@@ -87,7 +87,7 @@ export default function App() {
       </aside>
       <main className="content">
         {error && <div className="error-box global">{error}<button onClick={() => setError("")}>Cerrar</button></div>}
-        {tab === "summary" && <SummaryView data={data} token={token} onChanged={refresh} onImport={() => setTab("import")} />}
+        {tab === "summary" && <SummaryView data={data} token={token} onChanged={refresh} onImport={() => setTab("import")} onFixed={() => setTab("fixed")} />}
         {tab === "fixed" && <FixedCostsView token={token} />}
         {tab === "import" && <ReceiptImportView data={data} token={token} onChanged={refresh} onBack={() => setTab("summary")} />}
         {tab === "heating" && <ReadingsView service="heating" title="Lecturas de calefacción" data={data} token={token} onChanged={refresh} />}

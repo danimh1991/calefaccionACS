@@ -7,7 +7,8 @@ const winter = {
   dwellingCount: 79,
   invoiceTotal: 13211.17,
   fixedCostTotal: 5978.72,
-  actualFixedDailyRate: 0.44,
+  actualFixedRevenue: 0.44 * 79 * 174,
+  actualFixedPerDwelling: 0.44 * 174,
   additionalFixedCost: 2532.66974684932,
   heatingUsage: 198953,
   coolingUsage: 0,
@@ -22,13 +23,19 @@ describe("motor de liquidación", () => {
   it("replica el periodo de invierno del Excel", () => {
     const result = calculatePeriod(winter);
     expect(result.days).toBe(174);
-    expect(result.calculatedThermalRate).toBeCloseTo(0.0341185468268853, 12);
+    expect(result.calculatedThermalRate).toBeCloseTo((result.targetCost - winter.actualFixedRevenue - (winter.waterLitres / 1000) * winter.calculatedWaterRate) / winter.heatingUsage, 12);
     expect(result.calculatedRevenue).toBeCloseTo(15743.8397468493, 8);
     expect(result.calculatedBalance).toBeCloseTo(0, 8);
   });
 
   it("calcula la diferencia natural entre fechas", () => {
     expect(dateDifferenceDays("2025-10-30", "2026-04-22")).toBe(174);
+  });
+
+  it("usa el fijo realmente cobrado para cuadrar el precio térmico", () => {
+    const result = calculatePeriod({ ...winter, fixedCostTotal: 999_999 });
+    expect(result.calculatedBalance).toBeCloseTo(0, 8);
+    expect(result.calculatedThermalRate).toBeCloseTo((result.targetCost - winter.actualFixedRevenue - (winter.waterLitres / 1000) * winter.calculatedWaterRate) / winter.heatingUsage, 12);
   });
 
   it("no oculta un periodo sin consumo térmico", () => {

@@ -49,6 +49,14 @@ type FixedRuleRow = {
   notes: string | null;
 };
 
+type FixedNeighborChargeRow = {
+  id: number;
+  effective_from: string;
+  effective_to: string | null;
+  daily_rate: number;
+  notes: string | null;
+};
+
 const json = (data: unknown, init: ResponseInit = {}) =>
   Response.json(data, {
     ...init,
@@ -81,6 +89,7 @@ function periodInputs(
   period: PeriodRow,
   totals: { dwellings: number; invoices: number; heating: number; cooling: number; water: number },
   fixed: { costTotal: number; additionalCost: number },
+  fixedCharge: { perDwellingTotal: number; revenue: number },
 ): PeriodInputs {
   return {
     startDate: period.start_date,
@@ -88,7 +97,8 @@ function periodInputs(
     dwellingCount: totals.dwellings,
     invoiceTotal: totals.invoices,
     fixedCostTotal: fixed.costTotal,
-    actualFixedDailyRate: period.actual_fixed_daily_rate,
+    actualFixedRevenue: fixedCharge.revenue,
+    actualFixedPerDwelling: fixedCharge.perDwellingTotal,
     additionalFixedCost: fixed.additionalCost,
     heatingUsage: totals.heating,
     coolingUsage: totals.cooling,
@@ -216,7 +226,7 @@ async function invoiceTypes(request: Request, env: Env, path: string) {
 
 const PERIOD_FIELDS = [
   "name", "start_date", "end_date", "actual_heating_rate", "actual_cooling_rate",
-  "actual_water_rate", "actual_fixed_daily_rate", "calculated_water_rate",
+  "actual_water_rate", "calculated_water_rate",
 ] as const;
 
 function parsePeriod(body: Record<string, unknown>) {
@@ -227,7 +237,6 @@ function parsePeriod(body: Record<string, unknown>) {
     actual_heating_rate: number(body.actualHeatingRate, "precio real de calefacción"),
     actual_cooling_rate: number(body.actualCoolingRate, "precio real de frío"),
     actual_water_rate: number(body.actualWaterRate, "precio real de agua"),
-    actual_fixed_daily_rate: number(body.actualFixedDailyRate, "cuota fija diaria cobrada"),
     calculated_water_rate: number(body.calculatedWaterRate, "precio calculado de agua"),
   };
 }
@@ -316,6 +325,97 @@ async function calculateFixedCosts(env: Env, startDate: string, endDate: string)
     additionalCost: breakdown.filter((item) => item.treatment === "additional").reduce((sum, item) => sum + item.costTotal, 0),
     breakdown,
   };
+}
+
+async function fixedNeighborChargeData(env: Env) {
+  const result = await env.DB.prepare("SELECT id, effective_from, effective_to, daily_rate, notes FROM fixed_neighbor_charges ORDER BY effective_from DESC, id DESC").all<FixedNeighborChargeRow>();
+  return result.results;
+}
+
+async function calculateFixedNeighborCharges(env: Env, startDate: string, endDate: string, dwellingCount: number) {
+  const ranges = await fixedNeighborChargeData(env);
+  const applied = new Map<number, { row: FixedNeighborChargeRow; days: number }>();
+  let perDwellingTotal = 0;
+  let uncoveredDays = 0;
+  const cursor = new Date(`${startDate}T00:00:00Z`);
+  const end = new Date(`${endDate}T00:00:00Z`);
+  cursor.setUTCDate(cursor.getUTCDate() + 1);
+  while (cursor <= end) {
+    const day = cursor.toISOString().slice(0, 10);
+    const range = ranges.find((item) => item.effective_from <= day && (!item.effective_to || item.effective_to >= day));
+    if (!range) uncoveredDays += 1;
+    else {
+      perDwellingTotal += range.daily_rate;
+      const current = applied.get(range.id);
+      applied.set(range.id, { row: range, days: (current?.days ?? 0) + 1 });
+    }
+    cursor.setUTCDate(cursor.getUTCDate() + 1);
+  }
+  const days = Math.round((Date.parse(`${endDate}T00:00:00Z`) - Date.parse(`${startDate}T00:00:00Z`)) / 86_400_000);
+  return {
+    perDwellingTotal,
+    revenue: perDwellingTotal * dwellingCount,
+    averageDailyRate: days ? perDwellingTotal / days : 0,
+    currentDailyRate: ranges[0]?.daily_rate ?? null,
+    uncoveredDays,
+    rangesApplied: [...applied.values()].map(({ row, days: appliedDays }) => ({
+      id: row.id,
+      effectiveFrom: row.effective_from,
+      effectiveTo: row.effective_to,
+      dailyRate: row.daily_rate,
+      days: appliedDays,
+    })),
+  };
+}
+
+function parseFixedNeighborCharge(body: Record<string, unknown>) {
+  const effectiveFrom = text(body.effectiveFrom, "fecha de inicio");
+  const effectiveTo = typeof body.effectiveTo === "string" && body.effectiveTo ? body.effectiveTo : null;
+  if (effectiveTo && effectiveTo < effectiveFrom) throw new Error("La fecha final no puede ser anterior a la inicial.");
+  const dailyRate = number(body.dailyRate, "precio por vecino y día");
+  if (dailyRate < 0) throw new Error("El precio por vecino y día no puede ser negativo.");
+  return { effectiveFrom, effectiveTo, dailyRate, notes: typeof body.notes === "string" ? body.notes.trim() || null : null };
+}
+
+async function ensureFixedNeighborChargeDoesNotOverlap(env: Env, values: ReturnType<typeof parseFixedNeighborCharge>, excludeId?: number) {
+  const overlap = await env.DB.prepare(`SELECT id FROM fixed_neighbor_charges
+    WHERE id != ? AND effective_from <= COALESCE(?, '9999-12-31')
+      AND COALESCE(effective_to, '9999-12-31') >= ? LIMIT 1`)
+    .bind(excludeId ?? -1, values.effectiveTo, values.effectiveFrom).first();
+  if (overlap) throw new Error("Ese rango se solapa con otro fijo cobrado. Ajusta las fechas antes de guardarlo.");
+}
+
+async function fixedNeighborCharges(request: Request, env: Env, path: string) {
+  if (request.method === "GET" && path === "/api/fixed-neighbor-charges") return json({ charges: await fixedNeighborChargeData(env) });
+  if (request.method === "POST" && path === "/api/fixed-neighbor-charges") {
+    const values = parseFixedNeighborCharge(await request.json() as Record<string, unknown>);
+    const overlaps = await env.DB.prepare(`SELECT id, effective_from, effective_to FROM fixed_neighbor_charges
+      WHERE effective_from <= COALESCE(?, '9999-12-31')
+        AND COALESCE(effective_to, '9999-12-31') >= ? ORDER BY effective_from`).bind(values.effectiveTo, values.effectiveFrom).all<Pick<FixedNeighborChargeRow, "id" | "effective_from" | "effective_to">>();
+    const previousOpenRange = overlaps.results.length === 1 && overlaps.results[0].effective_to === null && overlaps.results[0].effective_from < values.effectiveFrom
+      ? overlaps.results[0] : null;
+    if (overlaps.results.length && !previousOpenRange) throw new Error("Ese rango se solapa con otro fijo cobrado. Ajusta las fechas antes de guardarlo.");
+    if (previousOpenRange) await env.DB.prepare("UPDATE fixed_neighbor_charges SET effective_to=date(?, '-1 day'), updated_at=CURRENT_TIMESTAMP WHERE id=?")
+      .bind(values.effectiveFrom, previousOpenRange.id).run();
+    const result = await env.DB.prepare("INSERT INTO fixed_neighbor_charges (effective_from, effective_to, daily_rate, notes) VALUES (?, ?, ?, ?)")
+      .bind(values.effectiveFrom, values.effectiveTo, values.dailyRate, values.notes).run();
+    return json({ ok: true, id: result.meta.last_row_id }, { status: 201 });
+  }
+  const match = path.match(/^\/api\/fixed-neighbor-charges\/(\d+)$/);
+  if (!match) return json({ error: "Tramo de fijo cobrado no encontrado." }, { status: 404 });
+  const id = Number(match[1]);
+  if (request.method === "PUT") {
+    const values = parseFixedNeighborCharge(await request.json() as Record<string, unknown>);
+    await ensureFixedNeighborChargeDoesNotOverlap(env, values, id);
+    await env.DB.prepare("UPDATE fixed_neighbor_charges SET effective_from=?, effective_to=?, daily_rate=?, notes=?, updated_at=CURRENT_TIMESTAMP WHERE id=?")
+      .bind(values.effectiveFrom, values.effectiveTo, values.dailyRate, values.notes, id).run();
+    return json({ ok: true });
+  }
+  if (request.method === "DELETE") {
+    await env.DB.prepare("DELETE FROM fixed_neighbor_charges WHERE id=?").bind(id).run();
+    return json({ ok: true });
+  }
+  return json({ error: "Método no permitido." }, { status: 405 });
 }
 
 function parseRule(body: Record<string, unknown>) {
@@ -445,15 +545,19 @@ async function summary(env: Env, id: number) {
     cooling: usage.reduce((sum, item) => sum + item.cooling, 0),
     water: usage.reduce((sum, item) => sum + item.waterLitres, 0),
   };
-  const fixed = await calculateFixedCosts(env, period.start_date, period.end_date);
-  const inputs = periodInputs(period, totals, fixed);
+  const [fixed, fixedCharge] = await Promise.all([
+    calculateFixedCosts(env, period.start_date, period.end_date),
+    calculateFixedNeighborCharges(env, period.start_date, period.end_date, totals.dwellings),
+  ]);
+  const inputs = periodInputs(period, totals, fixed, fixedCharge);
   const result = calculatePeriod(inputs);
   const rows = usage.map((item) => calculateDwelling(item, inputs, result.calculatedThermalRate, result.days));
   const warnings: string[] = [];
   const uncovered = fixed.breakdown.filter((item) => item.uncoveredDays > 0);
   if (uncovered.length) warnings.push(`Hay conceptos fijos sin regla durante parte del periodo: ${uncovered.map((item) => item.name).join(", ")}.`);
+  if (fixedCharge.uncoveredDays) warnings.push(`Falta una tarifa de fijo cobrado para ${fixedCharge.uncoveredDays} días del periodo.`);
   if (result.thermalUsage === 0) warnings.push("No hay consumo térmico para absorber el saldo restante.");
-  return json({ period, totals, result, fixed, warnings, rows });
+  return json({ period, totals, result, fixed, fixedCharge, warnings, rows });
 }
 
 async function api(request: Request, env: Env, url: URL) {
@@ -467,6 +571,7 @@ async function api(request: Request, env: Env, url: URL) {
   if (path === "/api/invoice-types" || path.startsWith("/api/invoice-types/")) return invoiceTypes(request, env, path);
   if (path === "/api/fixed-concepts" || path.startsWith("/api/fixed-concepts/")) return fixedConcepts(request, env, path);
   if (path === "/api/fixed-rules" || path.startsWith("/api/fixed-rules/")) return fixedRules(request, env, path);
+  if (path === "/api/fixed-neighbor-charges" || path.startsWith("/api/fixed-neighbor-charges/")) return fixedNeighborCharges(request, env, path);
   if (path === "/api/periods" || /^\/api\/periods\/\d+$/.test(path)) return periods(request, env, path);
   const summaryMatch = path.match(/^\/api\/summary\/(\d+)$/);
   if (summaryMatch && request.method === "GET") return summary(env, Number(summaryMatch[1]));
