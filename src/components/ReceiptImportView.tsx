@@ -7,7 +7,7 @@ import type { Bootstrap } from "../types";
 type ImportRow = ParsedReceipt & { page: number };
 type PdfTextItem = { str: string; transform: number[] };
 
-export function ReceiptImportView({ data, token, onChanged }: { data: Bootstrap; token: string; onChanged: () => void }) {
+export function ReceiptImportView({ data, token, onChanged, onBack }: { data: Bootstrap; token: string; onChanged: () => void; onBack: () => void }) {
   const [rows, setRows] = useState<ImportRow[]>([]); const [fileName, setFileName] = useState("");
   const [progress, setProgress] = useState(""); const [error, setError] = useState(""); const [message, setMessage] = useState(""); const [saving, setSaving] = useState(false);
   const activeDwellings = data.dwellings.filter((item) => item.active);
@@ -61,7 +61,7 @@ export function ReceiptImportView({ data, token, onChanged }: { data: Bootstrap;
     finally { setSaving(false); }
   };
 
-  return <section><header className="page-header"><div><p className="eyebrow">Entrada de datos</p><h1>Importar recibos PDF</h1><p>Lee una página por vivienda y prepara las lecturas actuales de Energía, ACS y Refrigeración. El PDF se procesa en este navegador y no se almacena.</p></div><label className="file-button">Seleccionar PDF<input type="file" accept="application/pdf,.pdf" onChange={(event) => { const file = event.target.files?.[0]; if (file) void readPdf(file); event.target.value = ""; }} /></label></header>
+  return <section><header className="page-header"><div><p className="eyebrow">Resumen del periodo · Entrada de datos</p><h1>Importar recibos PDF</h1><p>Lee una página por vivienda y prepara las lecturas actuales de Energía, ACS y Refrigeración. El PDF se procesa en este navegador y no se almacena.</p></div><div className="header-actions"><button className="secondary" onClick={onBack}>Volver al resumen</button><label className="file-button">Seleccionar PDF<input type="file" accept="application/pdf,.pdf" onChange={(event) => { const file = event.target.files?.[0]; if (file) void readPdf(file); event.target.value = ""; }} /></label></div></header>
     {progress && <div className="loading-line">{progress}</div>}{error && <div className="error-box">{error}</div>}{message && <div className="success-box">{message}</div>}
     {!rows.length && !progress && <article className="panel import-empty"><div className="import-icon">PDF</div><h2>Selecciona el PDF completo</h2><p>Para cada página se usará la fecha final del periodo y la columna “Actual” del cuadro “Detalle de consumo”.</p></article>}
     {rows.length > 0 && <><div className="import-metrics"><article className="metric-card"><p>Archivo</p><strong>{fileName}</strong><span>{rows.length} páginas leídas</span></article><article className="metric-card calculated"><p>Viviendas correctas</p><strong>{rows.length - invalid.length}</strong><span>de {activeDwellings.length} esperadas</span></article><article className={`metric-card ${invalid.length || missing.length ? "actual" : "calculated"}`}><p>Revisión</p><strong>{invalid.length + missing.length}</strong><span>{invalid.length ? `${invalid.length} páginas con incidencias` : missing.length ? `${missing.length} viviendas ausentes` : "Lista para importar"}</span></article></div>
