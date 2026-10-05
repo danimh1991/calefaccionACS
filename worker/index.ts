@@ -3,7 +3,7 @@ import { calculateDwelling, calculatePeriod, type DwellingUsage, type PeriodInpu
 type Env = {
   DB: D1Database;
   ASSETS: Fetcher;
-  APP_PASSWORD?: string;
+  APP_PIN?: string;
 };
 
 const BASE_PATH = "/calefaccionacs";
@@ -39,8 +39,8 @@ function apiPath(url: URL) {
 }
 
 function authorised(request: Request, env: Env) {
-  if (!env.APP_PASSWORD) return true;
-  return request.headers.get("Authorization") === `Bearer ${env.APP_PASSWORD}`;
+  if (!env.APP_PIN) return true;
+  return request.headers.get("Authorization") === `Bearer ${env.APP_PIN}`;
 }
 
 function number(value: unknown, field: string) {

@@ -16,8 +16,8 @@ const tabs: Array<{ id: Tab; label: string; eyebrow: string }> = [
 ];
 
 export default function App() {
-  const [token, setToken] = useState(() => sessionStorage.getItem("calefaccion-token") ?? "");
-  const [draftToken, setDraftToken] = useState("");
+  const [token, setToken] = useState(() => sessionStorage.getItem("calefaccion-pin") ?? "");
+  const [draftPin, setDraftPin] = useState("");
   const [data, setData] = useState<Bootstrap | null>(null);
   const [tab, setTab] = useState<Tab>("summary");
   const [error, setError] = useState("");
@@ -30,7 +30,7 @@ export default function App() {
       const next = await api<Bootstrap>("/bootstrap", candidate);
       setData(next);
       if (candidate) {
-        sessionStorage.setItem("calefaccion-token", candidate);
+        sessionStorage.setItem("calefaccion-pin", candidate);
         setToken(candidate);
       }
     } catch (reason) {
@@ -54,10 +54,10 @@ export default function App() {
           <div className="brand-mark">C·A</div>
           <p className="eyebrow">César Cort Botí 59</p>
           <h1>Calefacción y ACS</h1>
-          <p className="muted">Introduce la clave de administración para consultar y actualizar las liquidaciones.</p>
-          <form onSubmit={(event) => { event.preventDefault(); void load(draftToken); }}>
-            <label>Clave de acceso<input autoFocus type="password" value={draftToken} onChange={(event) => setDraftToken(event.target.value)} /></label>
-            <button className="primary" type="submit">Entrar</button>
+          <p className="muted">Introduce el PIN de cuatro cifras para consultar y actualizar las liquidaciones.</p>
+          <form onSubmit={(event) => { event.preventDefault(); if (draftPin.length === 4) void load(draftPin); }}>
+            <label>PIN de acceso<input className="pin-input" aria-label="PIN de acceso" autoFocus type="password" inputMode="numeric" autoComplete="current-password" pattern="[0-9]{4}" maxLength={4} value={draftPin} onChange={(event) => setDraftPin(event.target.value.replace(/\D/g, "").slice(0, 4))} /></label>
+            <button className="primary" type="submit" disabled={draftPin.length !== 4}>Entrar</button>
           </form>
           {error && <p className="error-box">{error}</p>}
         </section>

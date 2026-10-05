@@ -25,7 +25,7 @@ npm run db:seed:local
 npm run dev
 ```
 
-La aplicación queda disponible en `http://localhost:5173/calefaccionacs/`. Para exigir clave también en local, copia `.dev.vars.example` como `.dev.vars` y cambia `APP_PASSWORD`.
+La aplicación queda disponible en `http://localhost:5173/calefaccionacs/`. Para exigir PIN también en local, copia `.dev.vars.example` como `.dev.vars` y cambia `APP_PIN`.
 
 ## Verificación
 
@@ -48,7 +48,7 @@ npm run db:migrate:remote
 npm run db:seed:remote
 ```
 
-5. Guardar la clave de la aplicación: `npx wrangler secret put APP_PASSWORD`.
+5. Guardar el PIN de la aplicación: `npx wrangler secret put APP_PIN`.
 6. Publicar: `npm run deploy`.
 
 La ruta `danieta.com/calefaccionacs*` ya está declarada. El dominio debe estar en la misma cuenta de Cloudflare.
