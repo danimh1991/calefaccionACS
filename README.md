@@ -5,6 +5,8 @@ Aplicación para registrar lecturas comunitarias de calefacción, refrigeración
 - **Entrada real:** importe realmente cobrado con las tarifas y cuotas configuradas para los vecinos.
 - **Entrada calculada:** reparto que cubre las facturas y los costes fijos, ajustando automáticamente el precio térmico para que el saldo sea cero.
 
+Los recibos individuales de Sunflower pueden importarse desde un único PDF multipágina. La lectura se realiza localmente en el navegador: identifica la vivienda, usa la fecha final del periodo y extrae la columna `Actual` de Energía, ACS y Refrigeración. Antes de guardar se muestra una revisión completa y se exige que estén presentes todas las viviendas.
+
 Los conceptos fijos se pueden crear, editar, retirar y dividir en subconceptos. Cada regla tiene vigencia, periodicidad diaria/mensual/anual, IVA y coste para la comunidad. Los cambios de regla dentro de un periodo se prorratean día a día. La cuota fija realmente cobrada se introduce una sola vez en cada periodo como euros por vivienda y día. El intervalo facturable es `> inicio` y `<= fin`, sin ajuste manual de días, y la tarifa calculada común de calefacción/frío nunca es editable.
 
 ## Arquitectura
