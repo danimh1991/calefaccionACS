@@ -327,6 +327,22 @@ async function calculateFixedCosts(env: Env, startDate: string, endDate: string)
   };
 }
 
+async function suggestedFixedNeighborRate(env: Env) {
+  const concepts = await fixedData(env);
+  const childParents = new Set(concepts.filter((item) => item.parent_id !== null).map((item) => item.parent_id));
+  const leaves = concepts.filter((item) => !childParents.has(item.id));
+  const effectiveFrom = leaves.flatMap((item) => item.rules.map((rule) => rule.effective_from)).sort().at(-1) ?? null;
+  const dwelling = await env.DB.prepare("SELECT COUNT(*) AS total FROM dwellings WHERE active=1").first<{ total: number }>();
+  const dwellingCount = Number(dwelling?.total ?? 0);
+  if (!effectiveFrom || !dwellingCount) return { dailyRate: null, effectiveFrom };
+  const day = new Date(`${effectiveFrom}T00:00:00Z`);
+  const total = leaves.reduce((sum, concept) => {
+    const rule = concept.rules.find((item) => item.effective_from <= effectiveFrom && (!item.effective_to || item.effective_to >= effectiveFrom));
+    return sum + (rule ? dailyValue(rule.amount, rule.frequency, rule.vat_rate, day) : 0);
+  }, 0);
+  return { dailyRate: total / dwellingCount, effectiveFrom };
+}
+
 async function fixedNeighborChargeData(env: Env) {
   const result = await env.DB.prepare("SELECT id, effective_from, effective_to, daily_rate, notes FROM fixed_neighbor_charges ORDER BY effective_from DESC, id DESC").all<FixedNeighborChargeRow>();
   return result.results;
@@ -386,7 +402,10 @@ async function ensureFixedNeighborChargeDoesNotOverlap(env: Env, values: ReturnT
 }
 
 async function fixedNeighborCharges(request: Request, env: Env, path: string) {
-  if (request.method === "GET" && path === "/api/fixed-neighbor-charges") return json({ charges: await fixedNeighborChargeData(env) });
+  if (request.method === "GET" && path === "/api/fixed-neighbor-charges") {
+    const [charges, suggestion] = await Promise.all([fixedNeighborChargeData(env), suggestedFixedNeighborRate(env)]);
+    return json({ charges, suggestion });
+  }
   if (request.method === "POST" && path === "/api/fixed-neighbor-charges") {
     const values = parseFixedNeighborCharge(await request.json() as Record<string, unknown>);
     const overlaps = await env.DB.prepare(`SELECT id, effective_from, effective_to FROM fixed_neighbor_charges
@@ -462,6 +481,37 @@ async function fixedConcepts(request: Request, env: Env, path: string) {
 }
 
 async function fixedRules(request: Request, env: Env, path: string) {
+  if (request.method === "POST" && path === "/api/fixed-rules/batch") {
+    const body = await request.json() as Record<string, unknown>;
+    const effectiveFrom = text(body.effectiveFrom, "fecha de vigencia");
+    const effectiveTo = typeof body.effectiveTo === "string" && body.effectiveTo ? body.effectiveTo : null;
+    if (effectiveTo && effectiveTo < effectiveFrom) throw new Error("La fecha final no puede ser anterior a la inicial.");
+    const rows = Array.isArray(body.rows) ? body.rows as Array<Record<string, unknown>> : [];
+    if (!rows.length) throw new Error("No hay subcategorías que guardar.");
+    const parsed = rows.map((row) => {
+      const frequency = text(row.frequency, "periodicidad");
+      if (!["daily", "monthly", "annual"].includes(frequency)) throw new Error("Periodicidad no válida.");
+      const amount = number(row.amount, "importe");
+      const vatRate = number(row.vatRate ?? 0, "IVA");
+      if (amount < 0 || vatRate < 0) throw new Error("Los importes y el IVA no pueden ser negativos.");
+      return { conceptId: number(row.conceptId, "concepto"), amount, frequency, vatRate, notes: typeof row.notes === "string" ? row.notes.trim() || null : null };
+    });
+    const placeholders = parsed.map(() => "?").join(",");
+    const valid = await env.DB.prepare(`SELECT id FROM fixed_concepts WHERE active=1 AND calculation_mode='simple' AND id IN (${placeholders})`)
+      .bind(...parsed.map((row) => row.conceptId)).all<{ id: number }>();
+    if (new Set(valid.results.map((row) => row.id)).size !== parsed.length) throw new Error("Alguna subcategoría ya no está disponible.");
+    const statements = parsed.flatMap((row) => [
+      env.DB.prepare("UPDATE fixed_concept_rules SET effective_to=date(?, '-1 day'), updated_at=CURRENT_TIMESTAMP WHERE concept_id=? AND effective_from < ? AND (effective_to IS NULL OR effective_to >= ?)")
+        .bind(effectiveFrom, row.conceptId, effectiveFrom, effectiveFrom),
+      env.DB.prepare(`INSERT INTO fixed_concept_rules (concept_id, effective_from, effective_to, amount, frequency, vat_rate, notes)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(concept_id, effective_from) DO UPDATE SET effective_to=excluded.effective_to, amount=excluded.amount,
+        frequency=excluded.frequency, vat_rate=excluded.vat_rate, notes=excluded.notes, updated_at=CURRENT_TIMESTAMP`)
+        .bind(row.conceptId, effectiveFrom, effectiveTo, row.amount, row.frequency, row.vatRate, row.notes),
+    ]);
+    await env.DB.batch(statements);
+    return json({ ok: true, saved: parsed.length });
+  }
   if (request.method === "POST" && path === "/api/fixed-rules") {
     const values = parseRule(await request.json() as Record<string, unknown>);
     const concept = await env.DB.prepare("SELECT calculation_mode FROM fixed_concepts WHERE id=? AND active=1").bind(values.concept_id).first<{ calculation_mode: string }>();
