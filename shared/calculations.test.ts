@@ -7,7 +7,7 @@ const winter = {
   dwellingCount: 79,
   invoiceTotal: 13211.17,
   fixedCostTotal: 5978.72,
-  actualFixedRevenue: 5978.72,
+  actualFixedDailyRate: 0.44,
   additionalFixedCost: 2532.66974684932,
   heatingUsage: 198953,
   coolingUsage: 0,

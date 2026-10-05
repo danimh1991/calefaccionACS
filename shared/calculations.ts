@@ -4,7 +4,7 @@ export type PeriodInputs = {
   dwellingCount: number;
   invoiceTotal: number;
   fixedCostTotal: number;
-  actualFixedRevenue: number;
+  actualFixedDailyRate: number;
   additionalFixedCost: number;
   heatingUsage: number;
   coolingUsage: number;
@@ -43,6 +43,7 @@ export function calculatePeriod(inputs: PeriodInputs) {
   const thermalUsage = inputs.heatingUsage + inputs.coolingUsage;
   const targetCost = inputs.invoiceTotal + inputs.additionalFixedCost;
   const calculatedFixedRevenue = inputs.fixedCostTotal;
+  const actualFixedRevenue = inputs.actualFixedDailyRate * inputs.dwellingCount * days;
   const calculatedWaterRevenue = waterM3 * inputs.calculatedWaterRate;
   const remainingThermalCost =
     targetCost - calculatedFixedRevenue - calculatedWaterRevenue;
@@ -51,7 +52,7 @@ export function calculatePeriod(inputs: PeriodInputs) {
     inputs.heatingUsage * inputs.actualHeatingRate +
     inputs.coolingUsage * inputs.actualCoolingRate +
     waterM3 * inputs.actualWaterRate +
-    inputs.actualFixedRevenue;
+    actualFixedRevenue;
   const calculatedRevenue =
     thermalUsage * calculatedThermalRate +
     calculatedWaterRevenue +
@@ -62,7 +63,7 @@ export function calculatePeriod(inputs: PeriodInputs) {
     waterM3,
     thermalUsage,
     fixedCostTotal: inputs.fixedCostTotal,
-    actualFixedRevenue: inputs.actualFixedRevenue,
+    actualFixedRevenue,
     additionalFixedCost: inputs.additionalFixedCost,
     targetCost,
     calculatedThermalRate,
@@ -80,7 +81,7 @@ export function calculateDwelling(
   days: number,
 ) {
   const waterM3 = usage.waterLitres / 1000;
-  const actualFixedPerDwelling = inputs.dwellingCount ? inputs.actualFixedRevenue / inputs.dwellingCount : 0;
+  const actualFixedPerDwelling = inputs.actualFixedDailyRate * days;
   const calculatedFixedPerDwelling = inputs.dwellingCount ? inputs.fixedCostTotal / inputs.dwellingCount : 0;
   const actual =
     usage.heating * inputs.actualHeatingRate +

@@ -20,7 +20,7 @@ export type Period = {
   sunflowers_daily: number;
 };
 export type Bootstrap = { dwellings: Dwelling[]; readingDates: ReadingDate[]; invoices: Invoice[]; periods: Period[]; invoiceTypes: InvoiceType[] };
-export type FixedRule = { id: number; concept_id: number; effective_from: string; effective_to: string | null; amount: number; frequency: "daily" | "monthly" | "annual"; vat_rate: number; neighbor_amount: number | null; neighbor_frequency: "daily" | "monthly" | "annual" | null; neighbor_vat_rate: number | null; notes: string | null };
+export type FixedRule = { id: number; concept_id: number; effective_from: string; effective_to: string | null; amount: number; frequency: "daily" | "monthly" | "annual"; vat_rate: number; notes: string | null };
 export type FixedConcept = { id: number; name: string; parent_id: number | null; parent_name: string | null; calculation_mode: "simple" | "separate"; cost_treatment: "included" | "additional"; notes: string | null; active: number; sort_order: number; rules: FixedRule[] };
 export type Summary = {
   period: Period;
@@ -41,9 +41,8 @@ export type Summary = {
   };
   fixed: {
     costTotal: number;
-    billedTotal: number;
     additionalCost: number;
-    breakdown: Array<{ conceptId: number; name: string; parentId: number | null; parentName: string | null; treatment: "included" | "additional"; notes: string | null; costTotal: number; billedTotal: number; uncoveredDays: number }>;
+    breakdown: Array<{ conceptId: number; name: string; parentId: number | null; parentName: string | null; treatment: "included" | "additional"; notes: string | null; costTotal: number; uncoveredDays: number }>;
   };
   warnings: string[];
   rows: Array<{

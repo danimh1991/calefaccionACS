@@ -46,9 +46,6 @@ type FixedRuleRow = {
   amount: number;
   frequency: "daily" | "monthly" | "annual";
   vat_rate: number;
-  neighbor_amount: number | null;
-  neighbor_frequency: "daily" | "monthly" | "annual" | null;
-  neighbor_vat_rate: number | null;
   notes: string | null;
 };
 
@@ -83,7 +80,7 @@ function text(value: unknown, field: string) {
 function periodInputs(
   period: PeriodRow,
   totals: { dwellings: number; invoices: number; heating: number; cooling: number; water: number },
-  fixed: { costTotal: number; billedTotal: number; additionalCost: number },
+  fixed: { costTotal: number; additionalCost: number },
 ): PeriodInputs {
   return {
     startDate: period.start_date,
@@ -91,7 +88,7 @@ function periodInputs(
     dwellingCount: totals.dwellings,
     invoiceTotal: totals.invoices,
     fixedCostTotal: fixed.costTotal,
-    actualFixedRevenue: fixed.billedTotal,
+    actualFixedDailyRate: period.actual_fixed_daily_rate,
     additionalFixedCost: fixed.additionalCost,
     heatingUsage: totals.heating,
     coolingUsage: totals.cooling,
@@ -219,7 +216,7 @@ async function invoiceTypes(request: Request, env: Env, path: string) {
 
 const PERIOD_FIELDS = [
   "name", "start_date", "end_date", "actual_heating_rate", "actual_cooling_rate",
-  "actual_water_rate", "calculated_water_rate",
+  "actual_water_rate", "actual_fixed_daily_rate", "calculated_water_rate",
 ] as const;
 
 function parsePeriod(body: Record<string, unknown>) {
@@ -230,6 +227,7 @@ function parsePeriod(body: Record<string, unknown>) {
     actual_heating_rate: number(body.actualHeatingRate, "precio real de calefacción"),
     actual_cooling_rate: number(body.actualCoolingRate, "precio real de frío"),
     actual_water_rate: number(body.actualWaterRate, "precio real de agua"),
+    actual_fixed_daily_rate: number(body.actualFixedDailyRate, "cuota fija diaria cobrada"),
     calculated_water_rate: number(body.calculatedWaterRate, "precio calculado de agua"),
   };
 }
@@ -285,7 +283,7 @@ function dailyValue(amount: number, frequency: FixedRuleRow["frequency"], vatRat
   return amount * (1 + vatRate / 100) / divisor;
 }
 
-async function calculateFixedCosts(env: Env, startDate: string, endDate: string, dwellingCount: number) {
+async function calculateFixedCosts(env: Env, startDate: string, endDate: string) {
   const concepts = await fixedData(env);
   const childParents = new Set(concepts.filter((item) => item.parent_id !== null).map((item) => item.parent_id));
   const leaves = concepts.filter((item) => !childParents.has(item.id));
@@ -297,7 +295,6 @@ async function calculateFixedCosts(env: Env, startDate: string, endDate: string,
     treatment: concept.cost_treatment,
     notes: concept.notes,
     costTotal: 0,
-    billedTotal: 0,
     uncoveredDays: 0,
   }));
   const cursor = new Date(`${startDate}T00:00:00Z`);
@@ -310,32 +307,20 @@ async function calculateFixedCosts(env: Env, startDate: string, endDate: string,
       const rule = concept.rules.find((item) => item.effective_from <= day && (!item.effective_to || item.effective_to >= day));
       if (!rule) { breakdown[index].uncoveredDays += 1; continue; }
       const cost = dailyValue(rule.amount, rule.frequency, rule.vat_rate, cursor);
-      const billed = rule.neighbor_amount === null
-        ? cost
-        : dailyValue(rule.neighbor_amount, rule.neighbor_frequency ?? rule.frequency, rule.neighbor_vat_rate ?? rule.vat_rate, cursor) * dwellingCount;
       breakdown[index].costTotal += cost;
-      breakdown[index].billedTotal += billed;
     }
     cursor.setUTCDate(cursor.getUTCDate() + 1);
   }
   return {
     costTotal: breakdown.reduce((sum, item) => sum + item.costTotal, 0),
-    billedTotal: breakdown.reduce((sum, item) => sum + item.billedTotal, 0),
     additionalCost: breakdown.filter((item) => item.treatment === "additional").reduce((sum, item) => sum + item.costTotal, 0),
     breakdown,
   };
 }
 
-function optionalNumber(value: unknown) {
-  return value === null || value === undefined || value === "" ? null : number(value, "importe facturado a vecinos");
-}
-
 function parseRule(body: Record<string, unknown>) {
   const frequency = text(body.frequency, "periodicidad");
   if (!["daily", "monthly", "annual"].includes(frequency)) throw new Error("Periodicidad no válida.");
-  const neighborAmount = optionalNumber(body.neighborAmount);
-  const neighborFrequency = neighborAmount === null ? null : text(body.neighborFrequency ?? frequency, "periodicidad de vecinos");
-  if (neighborFrequency && !["daily", "monthly", "annual"].includes(neighborFrequency)) throw new Error("Periodicidad de vecinos no válida.");
   return {
     concept_id: number(body.conceptId, "concepto"),
     effective_from: text(body.effectiveFrom, "fecha de vigencia"),
@@ -343,9 +328,6 @@ function parseRule(body: Record<string, unknown>) {
     amount: number(body.amount, "importe"),
     frequency,
     vat_rate: number(body.vatRate ?? 0, "IVA"),
-    neighbor_amount: neighborAmount,
-    neighbor_frequency: neighborFrequency,
-    neighbor_vat_rate: neighborAmount === null ? null : number(body.neighborVatRate ?? body.vatRate ?? 0, "IVA de vecinos"),
     notes: typeof body.notes === "string" ? body.notes.trim() || null : null,
   };
 }
@@ -387,12 +369,10 @@ async function fixedRules(request: Request, env: Env, path: string) {
     await env.DB.prepare("UPDATE fixed_concept_rules SET effective_to=date(?, '-1 day'), updated_at=CURRENT_TIMESTAMP WHERE concept_id=? AND effective_from < ? AND (effective_to IS NULL OR effective_to >= ?)")
       .bind(values.effective_from, values.concept_id, values.effective_from, values.effective_from).run();
     const result = await env.DB.prepare(`INSERT INTO fixed_concept_rules
-      (concept_id, effective_from, effective_to, amount, frequency, vat_rate, neighbor_amount, neighbor_frequency, neighbor_vat_rate, notes)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      (concept_id, effective_from, effective_to, amount, frequency, vat_rate, notes)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(concept_id, effective_from) DO UPDATE SET effective_to=excluded.effective_to, amount=excluded.amount,
-      frequency=excluded.frequency, vat_rate=excluded.vat_rate, neighbor_amount=excluded.neighbor_amount,
-      neighbor_frequency=excluded.neighbor_frequency, neighbor_vat_rate=excluded.neighbor_vat_rate,
-      notes=excluded.notes, updated_at=CURRENT_TIMESTAMP`)
+      frequency=excluded.frequency, vat_rate=excluded.vat_rate, notes=excluded.notes, updated_at=CURRENT_TIMESTAMP`)
       .bind(...Object.values(values)).run();
     return json({ ok: true, id: result.meta.last_row_id }, { status: 201 });
   }
@@ -402,8 +382,8 @@ async function fixedRules(request: Request, env: Env, path: string) {
   if (request.method === "PUT") {
     const values = parseRule(await request.json() as Record<string, unknown>);
     await env.DB.prepare(`UPDATE fixed_concept_rules SET effective_from=?, effective_to=?, amount=?, frequency=?, vat_rate=?,
-      neighbor_amount=?, neighbor_frequency=?, neighbor_vat_rate=?, notes=?, updated_at=CURRENT_TIMESTAMP WHERE id=?`)
-      .bind(values.effective_from, values.effective_to, values.amount, values.frequency, values.vat_rate, values.neighbor_amount, values.neighbor_frequency, values.neighbor_vat_rate, values.notes, id).run();
+      notes=?, updated_at=CURRENT_TIMESTAMP WHERE id=?`)
+      .bind(values.effective_from, values.effective_to, values.amount, values.frequency, values.vat_rate, values.notes, id).run();
     return json({ ok: true });
   }
   if (request.method === "DELETE") {
@@ -465,14 +445,13 @@ async function summary(env: Env, id: number) {
     cooling: usage.reduce((sum, item) => sum + item.cooling, 0),
     water: usage.reduce((sum, item) => sum + item.waterLitres, 0),
   };
-  const fixed = await calculateFixedCosts(env, period.start_date, period.end_date, totals.dwellings);
+  const fixed = await calculateFixedCosts(env, period.start_date, period.end_date);
   const inputs = periodInputs(period, totals, fixed);
   const result = calculatePeriod(inputs);
   const rows = usage.map((item) => calculateDwelling(item, inputs, result.calculatedThermalRate, result.days));
   const warnings: string[] = [];
   const uncovered = fixed.breakdown.filter((item) => item.uncoveredDays > 0);
   if (uncovered.length) warnings.push(`Hay conceptos fijos sin regla durante parte del periodo: ${uncovered.map((item) => item.name).join(", ")}.`);
-  if (Math.abs(fixed.costTotal - fixed.billedTotal) > 0.01) warnings.push(`El fijo facturado a los vecinos difiere del coste fijo en ${(fixed.billedTotal - fixed.costTotal).toFixed(2)} €.`);
   if (result.thermalUsage === 0) warnings.push("No hay consumo térmico para absorber el saldo restante.");
   return json({ period, totals, result, fixed, warnings, rows });
 }
