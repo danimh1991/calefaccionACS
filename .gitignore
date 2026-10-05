@@ -1,0 +1,10 @@
+node_modules/
+dist/
+.wrangler/
+.dev.vars
+.codex/
+*.log
+*.tsbuildinfo
+*.xlsx
+*.zip
+.DS_Store

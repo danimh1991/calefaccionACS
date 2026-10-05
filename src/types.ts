@@ -1,0 +1,52 @@
+export type Dwelling = { id: number; address: string; short_name: string; sort_order: number; active: number };
+export type ReadingDate = { id: number; reading_date: string; notes: string | null };
+export type Invoice = { id: number; invoice_type: "electricity" | "water" | "other"; invoice_date: string; amount: number; description: string | null };
+export type Period = {
+  id: number;
+  name: string;
+  start_date: string;
+  end_date: string;
+  day_adjustment: number;
+  actual_heating_rate: number;
+  actual_cooling_rate: number;
+  actual_water_rate: number;
+  actual_fixed_daily_rate: number;
+  calculated_water_rate: number;
+  calculated_fixed_daily_rate: number;
+  fixed_electricity_daily: number;
+  fixed_water_daily: number;
+  administration_daily: number;
+  sunflowers_daily: number;
+};
+export type Bootstrap = { dwellings: Dwelling[]; readingDates: ReadingDate[]; invoices: Invoice[]; periods: Period[] };
+export type Summary = {
+  period: Period;
+  totals: { dwellings: number; invoices: number; heating: number; cooling: number; water: number };
+  result: {
+    days: number;
+    waterM3: number;
+    thermalUsage: number;
+    administration: number;
+    sunflowers: number;
+    targetCost: number;
+    calculatedThermalRate: number;
+    actualRevenue: number;
+    calculatedRevenue: number;
+    actualBalance: number;
+    calculatedBalance: number;
+  };
+  componentFixedDaily: number;
+  warnings: string[];
+  rows: Array<{
+    dwellingId: number;
+    address: string;
+    shortName: string;
+    heating: number;
+    cooling: number;
+    waterLitres: number;
+    waterM3: number;
+    actual: number;
+    calculated: number;
+    difference: number;
+  }>;
+};

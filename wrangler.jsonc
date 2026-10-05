@@ -1,0 +1,28 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "calefaccion-acs",
+  "main": "./worker/index.ts",
+  "compatibility_date": "2026-10-05",
+  "routes": [
+    {
+      "pattern": "danieta.com/calefaccionacs*",
+      "zone_name": "danieta.com"
+    }
+  ],
+  "assets": {
+    "binding": "ASSETS",
+    "not_found_handling": "single-page-application",
+    "run_worker_first": true
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "calefaccion-acs",
+      "database_id": "5f5a3aeb-c487-46a0-a989-b4ed2e7f24bc",
+      "migrations_dir": "migrations"
+    }
+  ],
+  "observability": {
+    "enabled": true
+  }
+}
