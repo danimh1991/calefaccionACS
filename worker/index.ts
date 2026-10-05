@@ -26,6 +26,32 @@ type PeriodRow = {
   sunflowers_daily: number;
 };
 
+type FixedConceptRow = {
+  id: number;
+  name: string;
+  parent_id: number | null;
+  parent_name: string | null;
+  calculation_mode: "simple" | "separate";
+  cost_treatment: "included" | "additional";
+  notes: string | null;
+  active: number;
+  sort_order: number;
+};
+
+type FixedRuleRow = {
+  id: number;
+  concept_id: number;
+  effective_from: string;
+  effective_to: string | null;
+  amount: number;
+  frequency: "daily" | "monthly" | "annual";
+  vat_rate: number;
+  neighbor_amount: number | null;
+  neighbor_frequency: "daily" | "monthly" | "annual" | null;
+  neighbor_vat_rate: number | null;
+  notes: string | null;
+};
+
 const json = (data: unknown, init: ResponseInit = {}) =>
   Response.json(data, {
     ...init,
@@ -54,35 +80,41 @@ function text(value: unknown, field: string) {
   return value.trim();
 }
 
-function periodInputs(period: PeriodRow, totals: { dwellings: number; invoices: number; heating: number; cooling: number; water: number }): PeriodInputs {
+function periodInputs(
+  period: PeriodRow,
+  totals: { dwellings: number; invoices: number; heating: number; cooling: number; water: number },
+  fixed: { costTotal: number; billedTotal: number; additionalCost: number },
+): PeriodInputs {
   return {
     startDate: period.start_date,
     endDate: period.end_date,
-    dayAdjustment: period.day_adjustment,
     dwellingCount: totals.dwellings,
     invoiceTotal: totals.invoices,
+    fixedCostTotal: fixed.costTotal,
+    actualFixedRevenue: fixed.billedTotal,
+    additionalFixedCost: fixed.additionalCost,
     heatingUsage: totals.heating,
     coolingUsage: totals.cooling,
     waterLitres: totals.water,
     actualHeatingRate: period.actual_heating_rate,
     actualCoolingRate: period.actual_cooling_rate,
     actualWaterRate: period.actual_water_rate,
-    actualFixedDailyRate: period.actual_fixed_daily_rate,
     calculatedWaterRate: period.calculated_water_rate,
-    calculatedFixedDailyRate: period.calculated_fixed_daily_rate,
-    administrationDaily: period.administration_daily,
-    sunflowersDaily: period.sunflowers_daily,
   };
 }
 
 async function bootstrap(env: Env) {
-  const [dwellings, dates, invoices, periods] = await Promise.all([
+  const [dwellings, dates, invoices, periods, invoiceTypes] = await Promise.all([
     env.DB.prepare("SELECT id, address, short_name, sort_order, active FROM dwellings ORDER BY sort_order").all(),
     env.DB.prepare("SELECT id, reading_date, notes FROM reading_dates ORDER BY reading_date DESC").all(),
-    env.DB.prepare("SELECT id, invoice_type, invoice_date, amount, description FROM invoices ORDER BY invoice_date DESC, id DESC").all(),
+    env.DB.prepare(`SELECT i.id, COALESCE(t.slug, i.invoice_type) AS invoice_type, COALESCE(t.name, i.invoice_type) AS invoice_type_name,
+      i.invoice_type_id, i.invoice_date, i.amount, i.description
+      FROM invoices i LEFT JOIN invoice_types t ON t.id = i.invoice_type_id
+      ORDER BY i.invoice_date DESC, i.id DESC`).all(),
     env.DB.prepare("SELECT * FROM periods ORDER BY start_date DESC").all(),
+    env.DB.prepare("SELECT id, name, slug, active, sort_order FROM invoice_types ORDER BY sort_order, name").all(),
   ]);
-  return json({ dwellings: dwellings.results, readingDates: dates.results, invoices: invoices.results, periods: periods.results });
+  return json({ dwellings: dwellings.results, readingDates: dates.results, invoices: invoices.results, periods: periods.results, invoiceTypes: invoiceTypes.results });
 }
 
 async function readings(request: Request, env: Env, url: URL) {
@@ -124,13 +156,28 @@ async function readings(request: Request, env: Env, url: URL) {
   return json({ error: "Método no permitido." }, { status: 405 });
 }
 
+async function readingHistory(env: Env, url: URL) {
+  const dwellingId = number(url.searchParams.get("dwellingId"), "vivienda");
+  const service = text(url.searchParams.get("service"), "servicio");
+  if (!["heating", "cooling", "water"].includes(service)) throw new Error("Servicio no válido.");
+  const dwelling = await env.DB.prepare("SELECT id, address, short_name FROM dwellings WHERE id = ?").bind(dwellingId).first();
+  if (!dwelling) return json({ error: "Vivienda no encontrada." }, { status: 404 });
+  const rows = await env.DB.prepare(`SELECT rd.reading_date, r.value
+    FROM readings r JOIN reading_dates rd ON rd.id = r.reading_date_id
+    WHERE r.dwelling_id = ? AND r.service = ? ORDER BY rd.reading_date DESC`)
+    .bind(dwellingId, service).all();
+  return json({ dwelling, rows: rows.results });
+}
+
 async function invoices(request: Request, env: Env, path: string) {
   if (request.method === "POST" && path === "/api/invoices") {
     const body = await request.json() as Record<string, unknown>;
-    const type = text(body.invoiceType, "tipo de factura");
-    if (!["electricity", "water", "other"].includes(type)) throw new Error("Tipo de factura no válido.");
-    const result = await env.DB.prepare("INSERT INTO invoices (invoice_type, invoice_date, amount, description) VALUES (?, ?, ?, ?)")
-      .bind(type, text(body.invoiceDate, "fecha"), number(body.amount, "importe"), typeof body.description === "string" ? body.description.trim() || null : null)
+    const typeId = number(body.invoiceTypeId, "tipo de factura");
+    const type = await env.DB.prepare("SELECT id, slug FROM invoice_types WHERE id = ? AND active = 1").bind(typeId).first<{ id: number; slug: string }>();
+    if (!type) throw new Error("Tipo de factura no válido.");
+    const legacyType = ["electricity", "water"].includes(type.slug) ? type.slug : "other";
+    const result = await env.DB.prepare("INSERT INTO invoices (invoice_type, invoice_type_id, invoice_date, amount, description) VALUES (?, ?, ?, ?, ?)")
+      .bind(legacyType, type.id, text(body.invoiceDate, "fecha"), number(body.amount, "importe"), typeof body.description === "string" ? body.description.trim() || null : null)
       .run();
     return json({ ok: true, id: result.meta.last_row_id }, { status: 201 });
   }
@@ -142,10 +189,37 @@ async function invoices(request: Request, env: Env, path: string) {
   return json({ error: "Método no permitido." }, { status: 405 });
 }
 
+function slugify(value: string) {
+  return value.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+}
+
+async function invoiceTypes(request: Request, env: Env, path: string) {
+  if (request.method === "POST" && path === "/api/invoice-types") {
+    const body = await request.json() as Record<string, unknown>;
+    const name = text(body.name, "nombre");
+    const baseSlug = slugify(name) || `tipo-${Date.now()}`;
+    const result = await env.DB.prepare("INSERT INTO invoice_types (name, slug, sort_order) VALUES (?, ?, COALESCE((SELECT MAX(sort_order) + 1 FROM invoice_types), 1))")
+      .bind(name, `${baseSlug}-${Date.now().toString(36)}`).run();
+    return json({ ok: true, id: result.meta.last_row_id }, { status: 201 });
+  }
+  const match = path.match(/^\/api\/invoice-types\/(\d+)$/);
+  if (!match) return json({ error: "Tipo de factura no encontrado." }, { status: 404 });
+  const id = Number(match[1]);
+  if (request.method === "PUT") {
+    const body = await request.json() as Record<string, unknown>;
+    await env.DB.prepare("UPDATE invoice_types SET name = ?, updated_at=CURRENT_TIMESTAMP WHERE id = ?").bind(text(body.name, "nombre"), id).run();
+    return json({ ok: true });
+  }
+  if (request.method === "DELETE") {
+    await env.DB.prepare("UPDATE invoice_types SET active = 0, updated_at=CURRENT_TIMESTAMP WHERE id = ?").bind(id).run();
+    return json({ ok: true });
+  }
+  return json({ error: "Método no permitido." }, { status: 405 });
+}
+
 const PERIOD_FIELDS = [
-  "name", "start_date", "end_date", "day_adjustment", "actual_heating_rate", "actual_cooling_rate",
-  "actual_water_rate", "actual_fixed_daily_rate", "calculated_water_rate", "calculated_fixed_daily_rate",
-  "fixed_electricity_daily", "fixed_water_daily", "administration_daily", "sunflowers_daily",
+  "name", "start_date", "end_date", "actual_heating_rate", "actual_cooling_rate",
+  "actual_water_rate", "calculated_water_rate",
 ] as const;
 
 function parsePeriod(body: Record<string, unknown>) {
@@ -153,17 +227,10 @@ function parsePeriod(body: Record<string, unknown>) {
     name: text(body.name, "nombre"),
     start_date: text(body.startDate, "fecha de inicio"),
     end_date: text(body.endDate, "fecha final"),
-    day_adjustment: number(body.dayAdjustment, "ajuste de días"),
     actual_heating_rate: number(body.actualHeatingRate, "precio real de calefacción"),
     actual_cooling_rate: number(body.actualCoolingRate, "precio real de frío"),
     actual_water_rate: number(body.actualWaterRate, "precio real de agua"),
-    actual_fixed_daily_rate: number(body.actualFixedDailyRate, "fijo real"),
     calculated_water_rate: number(body.calculatedWaterRate, "precio calculado de agua"),
-    calculated_fixed_daily_rate: number(body.calculatedFixedDailyRate, "fijo calculado"),
-    fixed_electricity_daily: number(body.fixedElectricityDaily, "fijo de luz"),
-    fixed_water_daily: number(body.fixedWaterDaily, "fijo de agua"),
-    administration_daily: number(body.administrationDaily, "administración"),
-    sunflowers_daily: number(body.sunflowersDaily, "Sunflowers"),
   };
 }
 
@@ -188,6 +255,159 @@ async function periods(request: Request, env: Env, path: string) {
   }
   if (request.method === "DELETE") {
     await env.DB.prepare("DELETE FROM periods WHERE id = ?").bind(id).run();
+    return json({ ok: true });
+  }
+  return json({ error: "Método no permitido." }, { status: 405 });
+}
+
+async function fixedData(env: Env) {
+  const [concepts, rules] = await Promise.all([
+    env.DB.prepare(`SELECT c.id, c.name, c.parent_id, p.name AS parent_name, c.calculation_mode,
+      c.cost_treatment, c.notes, c.active, c.sort_order
+      FROM fixed_concepts c LEFT JOIN fixed_concepts p ON p.id = c.parent_id
+      WHERE c.active = 1 ORDER BY COALESCE(c.parent_id, c.id), c.parent_id IS NOT NULL, c.sort_order, c.name`).all<FixedConceptRow>(),
+    env.DB.prepare("SELECT * FROM fixed_concept_rules ORDER BY concept_id, effective_from DESC").all<FixedRuleRow>(),
+  ]);
+  return concepts.results.map((concept) => ({ ...concept, rules: rules.results.filter((rule) => rule.concept_id === concept.id) }));
+}
+
+function daysInMonth(value: Date) {
+  return new Date(Date.UTC(value.getUTCFullYear(), value.getUTCMonth() + 1, 0)).getUTCDate();
+}
+
+function daysInYear(value: Date) {
+  const year = value.getUTCFullYear();
+  return (year % 4 === 0 && year % 100 !== 0) || year % 400 === 0 ? 366 : 365;
+}
+
+function dailyValue(amount: number, frequency: FixedRuleRow["frequency"], vatRate: number, day: Date) {
+  const divisor = frequency === "monthly" ? daysInMonth(day) : frequency === "annual" ? daysInYear(day) : 1;
+  return amount * (1 + vatRate / 100) / divisor;
+}
+
+async function calculateFixedCosts(env: Env, startDate: string, endDate: string, dwellingCount: number) {
+  const concepts = await fixedData(env);
+  const childParents = new Set(concepts.filter((item) => item.parent_id !== null).map((item) => item.parent_id));
+  const leaves = concepts.filter((item) => !childParents.has(item.id));
+  const breakdown = leaves.map((concept) => ({
+    conceptId: concept.id,
+    name: concept.name,
+    parentId: concept.parent_id,
+    parentName: concept.parent_name,
+    treatment: concept.cost_treatment,
+    notes: concept.notes,
+    costTotal: 0,
+    billedTotal: 0,
+    uncoveredDays: 0,
+  }));
+  const cursor = new Date(`${startDate}T00:00:00Z`);
+  const end = new Date(`${endDate}T00:00:00Z`);
+  cursor.setUTCDate(cursor.getUTCDate() + 1);
+  while (cursor <= end) {
+    const day = cursor.toISOString().slice(0, 10);
+    for (let index = 0; index < leaves.length; index += 1) {
+      const concept = leaves[index];
+      const rule = concept.rules.find((item) => item.effective_from <= day && (!item.effective_to || item.effective_to >= day));
+      if (!rule) { breakdown[index].uncoveredDays += 1; continue; }
+      const cost = dailyValue(rule.amount, rule.frequency, rule.vat_rate, cursor);
+      const billed = rule.neighbor_amount === null
+        ? cost
+        : dailyValue(rule.neighbor_amount, rule.neighbor_frequency ?? rule.frequency, rule.neighbor_vat_rate ?? rule.vat_rate, cursor) * dwellingCount;
+      breakdown[index].costTotal += cost;
+      breakdown[index].billedTotal += billed;
+    }
+    cursor.setUTCDate(cursor.getUTCDate() + 1);
+  }
+  return {
+    costTotal: breakdown.reduce((sum, item) => sum + item.costTotal, 0),
+    billedTotal: breakdown.reduce((sum, item) => sum + item.billedTotal, 0),
+    additionalCost: breakdown.filter((item) => item.treatment === "additional").reduce((sum, item) => sum + item.costTotal, 0),
+    breakdown,
+  };
+}
+
+function optionalNumber(value: unknown) {
+  return value === null || value === undefined || value === "" ? null : number(value, "importe facturado a vecinos");
+}
+
+function parseRule(body: Record<string, unknown>) {
+  const frequency = text(body.frequency, "periodicidad");
+  if (!["daily", "monthly", "annual"].includes(frequency)) throw new Error("Periodicidad no válida.");
+  const neighborAmount = optionalNumber(body.neighborAmount);
+  const neighborFrequency = neighborAmount === null ? null : text(body.neighborFrequency ?? frequency, "periodicidad de vecinos");
+  if (neighborFrequency && !["daily", "monthly", "annual"].includes(neighborFrequency)) throw new Error("Periodicidad de vecinos no válida.");
+  return {
+    concept_id: number(body.conceptId, "concepto"),
+    effective_from: text(body.effectiveFrom, "fecha de vigencia"),
+    effective_to: typeof body.effectiveTo === "string" && body.effectiveTo ? body.effectiveTo : null,
+    amount: number(body.amount, "importe"),
+    frequency,
+    vat_rate: number(body.vatRate ?? 0, "IVA"),
+    neighbor_amount: neighborAmount,
+    neighbor_frequency: neighborFrequency,
+    neighbor_vat_rate: neighborAmount === null ? null : number(body.neighborVatRate ?? body.vatRate ?? 0, "IVA de vecinos"),
+    notes: typeof body.notes === "string" ? body.notes.trim() || null : null,
+  };
+}
+
+async function fixedConcepts(request: Request, env: Env, path: string) {
+  if (request.method === "GET" && path === "/api/fixed-concepts") return json({ concepts: await fixedData(env) });
+  if (request.method === "POST" && path === "/api/fixed-concepts") {
+    const body = await request.json() as Record<string, unknown>;
+    const mode = body.calculationMode === "separate" ? "separate" : "simple";
+    const treatment = body.costTreatment === "included" ? "included" : "additional";
+    const parentId = body.parentId ? number(body.parentId, "concepto principal") : null;
+    const result = await env.DB.prepare(`INSERT INTO fixed_concepts
+      (name, parent_id, calculation_mode, cost_treatment, notes, sort_order)
+      VALUES (?, ?, ?, ?, ?, COALESCE((SELECT MAX(sort_order) + 1 FROM fixed_concepts WHERE parent_id = ? OR (parent_id IS NULL AND ? IS NULL)), 1))`)
+      .bind(text(body.name, "nombre"), parentId, mode, treatment, typeof body.notes === "string" ? body.notes.trim() || null : null, parentId, parentId).run();
+    return json({ ok: true, id: result.meta.last_row_id }, { status: 201 });
+  }
+  const match = path.match(/^\/api\/fixed-concepts\/(\d+)$/);
+  if (!match) return json({ error: "Concepto no encontrado." }, { status: 404 });
+  const id = Number(match[1]);
+  if (request.method === "PUT") {
+    const body = await request.json() as Record<string, unknown>;
+    await env.DB.prepare(`UPDATE fixed_concepts SET name=?, calculation_mode=?, cost_treatment=?, notes=?, updated_at=CURRENT_TIMESTAMP WHERE id=?`)
+      .bind(text(body.name, "nombre"), body.calculationMode === "separate" ? "separate" : "simple", body.costTreatment === "included" ? "included" : "additional", typeof body.notes === "string" ? body.notes.trim() || null : null, id).run();
+    return json({ ok: true });
+  }
+  if (request.method === "DELETE") {
+    await env.DB.prepare("UPDATE fixed_concepts SET active=0, updated_at=CURRENT_TIMESTAMP WHERE id=? OR parent_id=?").bind(id, id).run();
+    return json({ ok: true });
+  }
+  return json({ error: "Método no permitido." }, { status: 405 });
+}
+
+async function fixedRules(request: Request, env: Env, path: string) {
+  if (request.method === "POST" && path === "/api/fixed-rules") {
+    const values = parseRule(await request.json() as Record<string, unknown>);
+    const concept = await env.DB.prepare("SELECT calculation_mode FROM fixed_concepts WHERE id=? AND active=1").bind(values.concept_id).first<{ calculation_mode: string }>();
+    if (!concept || concept.calculation_mode !== "simple") throw new Error("Añade la regla a un concepto simple o a un subconcepto.");
+    await env.DB.prepare("UPDATE fixed_concept_rules SET effective_to=date(?, '-1 day'), updated_at=CURRENT_TIMESTAMP WHERE concept_id=? AND effective_from < ? AND (effective_to IS NULL OR effective_to >= ?)")
+      .bind(values.effective_from, values.concept_id, values.effective_from, values.effective_from).run();
+    const result = await env.DB.prepare(`INSERT INTO fixed_concept_rules
+      (concept_id, effective_from, effective_to, amount, frequency, vat_rate, neighbor_amount, neighbor_frequency, neighbor_vat_rate, notes)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(concept_id, effective_from) DO UPDATE SET effective_to=excluded.effective_to, amount=excluded.amount,
+      frequency=excluded.frequency, vat_rate=excluded.vat_rate, neighbor_amount=excluded.neighbor_amount,
+      neighbor_frequency=excluded.neighbor_frequency, neighbor_vat_rate=excluded.neighbor_vat_rate,
+      notes=excluded.notes, updated_at=CURRENT_TIMESTAMP`)
+      .bind(...Object.values(values)).run();
+    return json({ ok: true, id: result.meta.last_row_id }, { status: 201 });
+  }
+  const match = path.match(/^\/api\/fixed-rules\/(\d+)$/);
+  if (!match) return json({ error: "Regla no encontrada." }, { status: 404 });
+  const id = Number(match[1]);
+  if (request.method === "PUT") {
+    const values = parseRule(await request.json() as Record<string, unknown>);
+    await env.DB.prepare(`UPDATE fixed_concept_rules SET effective_from=?, effective_to=?, amount=?, frequency=?, vat_rate=?,
+      neighbor_amount=?, neighbor_frequency=?, neighbor_vat_rate=?, notes=?, updated_at=CURRENT_TIMESTAMP WHERE id=?`)
+      .bind(values.effective_from, values.effective_to, values.amount, values.frequency, values.vat_rate, values.neighbor_amount, values.neighbor_frequency, values.neighbor_vat_rate, values.notes, id).run();
+    return json({ ok: true });
+  }
+  if (request.method === "DELETE") {
+    await env.DB.prepare("DELETE FROM fixed_concept_rules WHERE id=?").bind(id).run();
     return json({ ok: true });
   }
   return json({ error: "Método no permitido." }, { status: 405 });
@@ -245,28 +465,29 @@ async function summary(env: Env, id: number) {
     cooling: usage.reduce((sum, item) => sum + item.cooling, 0),
     water: usage.reduce((sum, item) => sum + item.waterLitres, 0),
   };
-  const inputs = periodInputs(period, totals);
+  const fixed = await calculateFixedCosts(env, period.start_date, period.end_date, totals.dwellings);
+  const inputs = periodInputs(period, totals, fixed);
   const result = calculatePeriod(inputs);
   const rows = usage.map((item) => calculateDwelling(item, inputs, result.calculatedThermalRate, result.days));
-  const componentFixedDaily = totals.dwellings
-    ? (period.fixed_electricity_daily + period.fixed_water_daily + period.administration_daily + period.sunflowers_daily) / totals.dwellings
-    : 0;
   const warnings: string[] = [];
-  if (Math.abs(componentFixedDaily - period.calculated_fixed_daily_rate) > 0.005) {
-    warnings.push(`El fijo calculado aplicado (${period.calculated_fixed_daily_rate.toFixed(4)} €/vivienda/día) no coincide con el desglose (${componentFixedDaily.toFixed(4)} €).`);
-  }
-  if (period.day_adjustment !== 0) warnings.push(`Se aplican ${period.day_adjustment} días de ajuste al periodo.`);
+  const uncovered = fixed.breakdown.filter((item) => item.uncoveredDays > 0);
+  if (uncovered.length) warnings.push(`Hay conceptos fijos sin regla durante parte del periodo: ${uncovered.map((item) => item.name).join(", ")}.`);
+  if (Math.abs(fixed.costTotal - fixed.billedTotal) > 0.01) warnings.push(`El fijo facturado a los vecinos difiere del coste fijo en ${(fixed.billedTotal - fixed.costTotal).toFixed(2)} €.`);
   if (result.thermalUsage === 0) warnings.push("No hay consumo térmico para absorber el saldo restante.");
-  return json({ period, totals, result, componentFixedDaily, warnings, rows });
+  return json({ period, totals, result, fixed, warnings, rows });
 }
 
 async function api(request: Request, env: Env, url: URL) {
   const path = apiPath(url);
   if (path === "/api/health") return json({ ok: true, authenticated: authorised(request, env) });
-  if (!authorised(request, env)) return json({ error: "Clave incorrecta." }, { status: 401 });
+  if (!authorised(request, env)) return json({ error: "PIN incorrecto." }, { status: 401 });
   if (path === "/api/bootstrap" && request.method === "GET") return bootstrap(env);
+  if (path === "/api/readings/history" && request.method === "GET") return readingHistory(env, url);
   if (path === "/api/readings") return readings(request, env, url);
   if (path === "/api/invoices" || path.startsWith("/api/invoices/")) return invoices(request, env, path);
+  if (path === "/api/invoice-types" || path.startsWith("/api/invoice-types/")) return invoiceTypes(request, env, path);
+  if (path === "/api/fixed-concepts" || path.startsWith("/api/fixed-concepts/")) return fixedConcepts(request, env, path);
+  if (path === "/api/fixed-rules" || path.startsWith("/api/fixed-rules/")) return fixedRules(request, env, path);
   if (path === "/api/periods" || /^\/api\/periods\/\d+$/.test(path)) return periods(request, env, path);
   const summaryMatch = path.match(/^\/api\/summary\/(\d+)$/);
   if (summaryMatch && request.method === "GET") return summary(env, Number(summaryMatch[1]));

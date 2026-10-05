@@ -1,20 +1,18 @@
 export type PeriodInputs = {
   startDate: string;
   endDate: string;
-  dayAdjustment: number;
   dwellingCount: number;
   invoiceTotal: number;
+  fixedCostTotal: number;
+  actualFixedRevenue: number;
+  additionalFixedCost: number;
   heatingUsage: number;
   coolingUsage: number;
   waterLitres: number;
   actualHeatingRate: number;
   actualCoolingRate: number;
   actualWaterRate: number;
-  actualFixedDailyRate: number;
   calculatedWaterRate: number;
-  calculatedFixedDailyRate: number;
-  administrationDaily: number;
-  sunflowersDaily: number;
 };
 
 export type DwellingUsage = {
@@ -38,16 +36,13 @@ export function dateDifferenceDays(startDate: string, endDate: string): number {
 }
 
 export function calculatePeriod(inputs: PeriodInputs) {
-  const days = dateDifferenceDays(inputs.startDate, inputs.endDate) + inputs.dayAdjustment;
+  const days = dateDifferenceDays(inputs.startDate, inputs.endDate);
   if (days <= 0) throw new Error("El número de días facturables debe ser mayor que cero.");
 
   const waterM3 = inputs.waterLitres / 1000;
   const thermalUsage = inputs.heatingUsage + inputs.coolingUsage;
-  const administration = days * inputs.administrationDaily;
-  const sunflowers = days * inputs.sunflowersDaily;
-  const targetCost = inputs.invoiceTotal + administration + sunflowers;
-  const calculatedFixedRevenue =
-    days * inputs.dwellingCount * inputs.calculatedFixedDailyRate;
+  const targetCost = inputs.invoiceTotal + inputs.additionalFixedCost;
+  const calculatedFixedRevenue = inputs.fixedCostTotal;
   const calculatedWaterRevenue = waterM3 * inputs.calculatedWaterRate;
   const remainingThermalCost =
     targetCost - calculatedFixedRevenue - calculatedWaterRevenue;
@@ -56,7 +51,7 @@ export function calculatePeriod(inputs: PeriodInputs) {
     inputs.heatingUsage * inputs.actualHeatingRate +
     inputs.coolingUsage * inputs.actualCoolingRate +
     waterM3 * inputs.actualWaterRate +
-    days * inputs.dwellingCount * inputs.actualFixedDailyRate;
+    inputs.actualFixedRevenue;
   const calculatedRevenue =
     thermalUsage * calculatedThermalRate +
     calculatedWaterRevenue +
@@ -66,8 +61,9 @@ export function calculatePeriod(inputs: PeriodInputs) {
     days,
     waterM3,
     thermalUsage,
-    administration,
-    sunflowers,
+    fixedCostTotal: inputs.fixedCostTotal,
+    actualFixedRevenue: inputs.actualFixedRevenue,
+    additionalFixedCost: inputs.additionalFixedCost,
     targetCost,
     calculatedThermalRate,
     actualRevenue,
@@ -84,14 +80,16 @@ export function calculateDwelling(
   days: number,
 ) {
   const waterM3 = usage.waterLitres / 1000;
+  const actualFixedPerDwelling = inputs.dwellingCount ? inputs.actualFixedRevenue / inputs.dwellingCount : 0;
+  const calculatedFixedPerDwelling = inputs.dwellingCount ? inputs.fixedCostTotal / inputs.dwellingCount : 0;
   const actual =
     usage.heating * inputs.actualHeatingRate +
     usage.cooling * inputs.actualCoolingRate +
     waterM3 * inputs.actualWaterRate +
-    days * inputs.actualFixedDailyRate;
+    actualFixedPerDwelling;
   const calculated =
     (usage.heating + usage.cooling) * thermalRate +
     waterM3 * inputs.calculatedWaterRate +
-    days * inputs.calculatedFixedDailyRate;
+    calculatedFixedPerDwelling;
   return { ...usage, waterM3, actual, calculated, difference: calculated - actual };
 }

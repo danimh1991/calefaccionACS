@@ -2461,21 +2461,21 @@ INSERT OR REPLACE INTO readings (dwelling_id, reading_date_id, service, value) V
 INSERT OR REPLACE INTO readings (dwelling_id, reading_date_id, service, value) VALUES (78, 10, 'water', 67497);
 INSERT OR REPLACE INTO readings (dwelling_id, reading_date_id, service, value) VALUES (79, 10, 'water', 22225);
 
-INSERT OR IGNORE INTO invoices (id, invoice_type, invoice_date, amount) VALUES (1, 'electricity', '2025-12-18', 2329.04);
-INSERT OR IGNORE INTO invoices (id, invoice_type, invoice_date, amount) VALUES (2, 'water', '2026-01-21', 538.81);
-INSERT OR IGNORE INTO invoices (id, invoice_type, invoice_date, amount) VALUES (3, 'electricity', '2026-02-12', 5252.38);
-INSERT OR IGNORE INTO invoices (id, invoice_type, invoice_date, amount) VALUES (4, 'water', '2026-03-20', 468.26);
-INSERT OR IGNORE INTO invoices (id, invoice_type, invoice_date, amount) VALUES (5, 'electricity', '2026-03-28', 2071.81);
-INSERT OR IGNORE INTO invoices (id, invoice_type, invoice_date, amount) VALUES (6, 'electricity', '2026-03-28', 1612.26);
-INSERT OR IGNORE INTO invoices (id, invoice_type, invoice_date, amount) VALUES (7, 'electricity', '2026-04-21', 938.61);
-INSERT OR IGNORE INTO invoices (id, invoice_type, invoice_date, amount) VALUES (8, 'electricity', '2026-05-31', 1068.58);
-INSERT OR IGNORE INTO invoices (id, invoice_type, invoice_date, amount) VALUES (9, 'water', '2026-05-12', 446.51);
-INSERT OR IGNORE INTO invoices (id, invoice_type, invoice_date, amount) VALUES (10, 'electricity', '2026-06-30', 1809.58);
-INSERT OR IGNORE INTO invoices (id, invoice_type, invoice_date, amount) VALUES (11, 'water', '2026-07-09', 372.76);
-INSERT OR IGNORE INTO invoices (id, invoice_type, invoice_date, amount) VALUES (12, 'electricity', '2026-08-05', 1758.25);
-INSERT OR IGNORE INTO invoices (id, invoice_type, invoice_date, amount) VALUES (13, 'electricity', '2026-08-13', 219.97);
-INSERT OR IGNORE INTO invoices (id, invoice_type, invoice_date, amount) VALUES (14, 'water', '2026-09-07', 288.99);
-INSERT OR IGNORE INTO invoices (id, invoice_type, invoice_date, amount) VALUES (15, 'electricity', '2026-08-17', 1356.93);
+INSERT OR IGNORE INTO invoices (id, invoice_type, invoice_type_id, invoice_date, amount) VALUES (1, 'electricity', 1, '2025-12-18', 2329.04);
+INSERT OR IGNORE INTO invoices (id, invoice_type, invoice_type_id, invoice_date, amount) VALUES (2, 'water', 2, '2026-01-21', 538.81);
+INSERT OR IGNORE INTO invoices (id, invoice_type, invoice_type_id, invoice_date, amount) VALUES (3, 'electricity', 1, '2026-02-12', 5252.38);
+INSERT OR IGNORE INTO invoices (id, invoice_type, invoice_type_id, invoice_date, amount) VALUES (4, 'water', 2, '2026-03-20', 468.26);
+INSERT OR IGNORE INTO invoices (id, invoice_type, invoice_type_id, invoice_date, amount) VALUES (5, 'electricity', 1, '2026-03-28', 2071.81);
+INSERT OR IGNORE INTO invoices (id, invoice_type, invoice_type_id, invoice_date, amount) VALUES (6, 'electricity', 1, '2026-03-28', 1612.26);
+INSERT OR IGNORE INTO invoices (id, invoice_type, invoice_type_id, invoice_date, amount) VALUES (7, 'electricity', 1, '2026-04-21', 938.61);
+INSERT OR IGNORE INTO invoices (id, invoice_type, invoice_type_id, invoice_date, amount) VALUES (8, 'electricity', 1, '2026-05-31', 1068.58);
+INSERT OR IGNORE INTO invoices (id, invoice_type, invoice_type_id, invoice_date, amount) VALUES (9, 'water', 2, '2026-05-12', 446.51);
+INSERT OR IGNORE INTO invoices (id, invoice_type, invoice_type_id, invoice_date, amount) VALUES (10, 'electricity', 1, '2026-06-30', 1809.58);
+INSERT OR IGNORE INTO invoices (id, invoice_type, invoice_type_id, invoice_date, amount) VALUES (11, 'water', 2, '2026-07-09', 372.76);
+INSERT OR IGNORE INTO invoices (id, invoice_type, invoice_type_id, invoice_date, amount) VALUES (12, 'electricity', 1, '2026-08-05', 1758.25);
+INSERT OR IGNORE INTO invoices (id, invoice_type, invoice_type_id, invoice_date, amount) VALUES (13, 'electricity', 1, '2026-08-13', 219.97);
+INSERT OR IGNORE INTO invoices (id, invoice_type, invoice_type_id, invoice_date, amount) VALUES (14, 'water', 2, '2026-09-07', 288.99);
+INSERT OR IGNORE INTO invoices (id, invoice_type, invoice_type_id, invoice_date, amount) VALUES (15, 'electricity', 1, '2026-08-17', 1356.93);
 
 INSERT OR IGNORE INTO periods (id, name, start_date, end_date, day_adjustment, actual_heating_rate, actual_cooling_rate, actual_water_rate, actual_fixed_daily_rate, calculated_water_rate, calculated_fixed_daily_rate, fixed_electricity_daily, fixed_water_daily, administration_daily, sunflowers_daily) VALUES (1, 'INVIERNO 2025', '2025-10-30', '2026-04-22', -2, 0.05, 0, 3, 0.44, 2.5, 0.44, 13.0503824, 0.76824, 2, 12.724824109589);
 INSERT OR IGNORE INTO periods (id, name, start_date, end_date, day_adjustment, actual_heating_rate, actual_cooling_rate, actual_water_rate, actual_fixed_daily_rate, calculated_water_rate, calculated_fixed_daily_rate, fixed_electricity_daily, fixed_water_daily, administration_daily, sunflowers_daily) VALUES (2, 'VERANO 2026', '2026-04-22', '2026-08-18', -2, 0.04, 0.04, 2.5, 0.44, 2.5, 0.44, 13.0503824, 0.76824, 2, 12.724824109589);

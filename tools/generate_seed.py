@@ -76,12 +76,12 @@ def main():
                 )
 
     lines.append("")
-    invoice_types = {"Luz": "electricity", "Agua": "water"}
+    invoice_types = {"Luz": ("electricity", 1), "Agua": ("water", 2)}
     for row in range(2, invoices.max_row + 1):
         raw_type = str(invoices.cell(row, 1).value).strip()
         lines.append(
-            "INSERT OR IGNORE INTO invoices (id, invoice_type, invoice_date, amount) VALUES "
-            f"({row - 1}, {sql_text(invoice_types.get(raw_type, 'other'))}, {sql_text(iso(invoices.cell(row, 2).value))}, {n(invoices.cell(row, 3).value)});"
+            "INSERT OR IGNORE INTO invoices (id, invoice_type, invoice_type_id, invoice_date, amount) VALUES "
+            f"({row - 1}, {sql_text(invoice_types.get(raw_type, ('other', 3))[0])}, {invoice_types.get(raw_type, ('other', 3))[1]}, {sql_text(iso(invoices.cell(row, 2).value))}, {n(invoices.cell(row, 3).value)});"
         )
 
     lines.append("")

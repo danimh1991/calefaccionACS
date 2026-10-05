@@ -2,16 +2,16 @@
 
 Aplicación para registrar lecturas comunitarias de calefacción, refrigeración y agua, añadir facturas y cerrar periodos comparando:
 
-- **Entrada real:** importe cobrado con las tarifas reales configuradas.
-- **Entrada calculada:** reparto que cubre facturas, administración y Sunflowers, ajustando el precio térmico para que el saldo sea cero.
+- **Entrada real:** importe realmente cobrado con las tarifas y cuotas configuradas para los vecinos.
+- **Entrada calculada:** reparto que cubre las facturas y los costes fijos, ajustando automáticamente el precio térmico para que el saldo sea cero.
 
-La aplicación replica los dos periodos del Excel de referencia y conserva sus criterios actuales: ajuste de `-2` días, factura con fecha `> inicio` y `<= fin`, y una tarifa calculada común para calefacción y frío.
+Los conceptos fijos se pueden crear, editar, retirar y dividir en subconceptos. Cada regla tiene vigencia, periodicidad diaria/mensual/anual, IVA, coste para la comunidad e importe opcional facturado a cada vivienda. Los cambios de regla dentro de un periodo se prorratean día a día. El intervalo facturable es `> inicio` y `<= fin`, sin ajuste manual de días, y la tarifa calculada común de calefacción/frío nunca es editable.
 
 ## Arquitectura
 
 - React + TypeScript + Vite.
 - Cloudflare Worker para la API y los recursos estáticos.
-- Cloudflare D1 para viviendas, lecturas, facturas y periodos.
+- Cloudflare D1 para viviendas, lecturas, tipos de factura, facturas, conceptos fijos y periodos.
 - Ruta de producción: `https://danieta.com/calefaccionacs`.
 
 ## Desarrollo local

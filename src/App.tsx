@@ -4,11 +4,13 @@ import type { Bootstrap } from "./types";
 import { SummaryView } from "./components/SummaryView";
 import { ReadingsView } from "./components/ReadingsView";
 import { InvoicesView } from "./components/InvoicesView";
+import { FixedCostsView } from "./components/FixedCostsView";
 
-type Tab = "summary" | "heating" | "water" | "cooling" | "invoices";
+type Tab = "summary" | "fixed" | "heating" | "water" | "cooling" | "invoices";
 
 const tabs: Array<{ id: Tab; label: string; eyebrow: string }> = [
   { id: "summary", label: "Resumen del periodo", eyebrow: "Cierre" },
+  { id: "fixed", label: "Conceptos fijos", eyebrow: "Configuración" },
   { id: "heating", label: "Calefacción", eyebrow: "Lecturas" },
   { id: "water", label: "Agua", eyebrow: "Lecturas" },
   { id: "cooling", label: "Frío", eyebrow: "Lecturas" },
@@ -85,6 +87,7 @@ export default function App() {
       <main className="content">
         {error && <div className="error-box global">{error}<button onClick={() => setError("")}>Cerrar</button></div>}
         {tab === "summary" && <SummaryView data={data} token={token} onChanged={refresh} />}
+        {tab === "fixed" && <FixedCostsView token={token} />}
         {tab === "heating" && <ReadingsView service="heating" title="Lecturas de calefacción" data={data} token={token} onChanged={refresh} />}
         {tab === "water" && <ReadingsView service="water" title="Lecturas de agua" data={data} token={token} onChanged={refresh} />}
         {tab === "cooling" && <ReadingsView service="cooling" title="Lecturas de frío" data={data} token={token} onChanged={refresh} />}

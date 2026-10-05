@@ -4,26 +4,24 @@ import { calculatePeriod, dateDifferenceDays } from "./calculations";
 const winter = {
   startDate: "2025-10-30",
   endDate: "2026-04-22",
-  dayAdjustment: -2,
   dwellingCount: 79,
   invoiceTotal: 13211.17,
+  fixedCostTotal: 5978.72,
+  actualFixedRevenue: 5978.72,
+  additionalFixedCost: 2532.66974684932,
   heatingUsage: 198953,
   coolingUsage: 0,
   waterLitres: 1190853,
   actualHeatingRate: 0.05,
   actualCoolingRate: 0,
   actualWaterRate: 3,
-  actualFixedDailyRate: 0.44,
   calculatedWaterRate: 2.5,
-  calculatedFixedDailyRate: 0.44,
-  administrationDaily: 2,
-  sunflowersDaily: 12.724824109589,
 };
 
 describe("motor de liquidación", () => {
   it("replica el periodo de invierno del Excel", () => {
     const result = calculatePeriod(winter);
-    expect(result.days).toBe(172);
+    expect(result.days).toBe(174);
     expect(result.calculatedThermalRate).toBeCloseTo(0.0341185468268853, 12);
     expect(result.calculatedRevenue).toBeCloseTo(15743.8397468493, 8);
     expect(result.calculatedBalance).toBeCloseTo(0, 8);

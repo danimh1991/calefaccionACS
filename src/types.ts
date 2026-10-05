@@ -1,6 +1,7 @@
 export type Dwelling = { id: number; address: string; short_name: string; sort_order: number; active: number };
 export type ReadingDate = { id: number; reading_date: string; notes: string | null };
-export type Invoice = { id: number; invoice_type: "electricity" | "water" | "other"; invoice_date: string; amount: number; description: string | null };
+export type InvoiceType = { id: number; name: string; slug: string; active: number; sort_order: number };
+export type Invoice = { id: number; invoice_type: string; invoice_type_name: string; invoice_type_id: number; invoice_date: string; amount: number; description: string | null };
 export type Period = {
   id: number;
   name: string;
@@ -18,7 +19,9 @@ export type Period = {
   administration_daily: number;
   sunflowers_daily: number;
 };
-export type Bootstrap = { dwellings: Dwelling[]; readingDates: ReadingDate[]; invoices: Invoice[]; periods: Period[] };
+export type Bootstrap = { dwellings: Dwelling[]; readingDates: ReadingDate[]; invoices: Invoice[]; periods: Period[]; invoiceTypes: InvoiceType[] };
+export type FixedRule = { id: number; concept_id: number; effective_from: string; effective_to: string | null; amount: number; frequency: "daily" | "monthly" | "annual"; vat_rate: number; neighbor_amount: number | null; neighbor_frequency: "daily" | "monthly" | "annual" | null; neighbor_vat_rate: number | null; notes: string | null };
+export type FixedConcept = { id: number; name: string; parent_id: number | null; parent_name: string | null; calculation_mode: "simple" | "separate"; cost_treatment: "included" | "additional"; notes: string | null; active: number; sort_order: number; rules: FixedRule[] };
 export type Summary = {
   period: Period;
   totals: { dwellings: number; invoices: number; heating: number; cooling: number; water: number };
@@ -26,8 +29,9 @@ export type Summary = {
     days: number;
     waterM3: number;
     thermalUsage: number;
-    administration: number;
-    sunflowers: number;
+    fixedCostTotal: number;
+    actualFixedRevenue: number;
+    additionalFixedCost: number;
     targetCost: number;
     calculatedThermalRate: number;
     actualRevenue: number;
@@ -35,7 +39,12 @@ export type Summary = {
     actualBalance: number;
     calculatedBalance: number;
   };
-  componentFixedDaily: number;
+  fixed: {
+    costTotal: number;
+    billedTotal: number;
+    additionalCost: number;
+    breakdown: Array<{ conceptId: number; name: string; parentId: number | null; parentName: string | null; treatment: "included" | "additional"; notes: string | null; costTotal: number; billedTotal: number; uncoveredDays: number }>;
+  };
   warnings: string[];
   rows: Array<{
     dwellingId: number;
