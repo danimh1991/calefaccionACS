@@ -6,9 +6,12 @@ export type ParsedReceipt = {
   dwellingName: string;
   address: string;
   date: string;
+  periodStart: string;
+  periodEnd: string;
   heating: number | null;
   water: number | null;
   cooling: number | null;
+  fixedDailyRate: number | null;
   errors: string[];
 };
 
@@ -48,15 +51,21 @@ export function parseReceipt(lines: ReceiptLine[], dwellings: Dwelling[]): Parse
   const periodDates = periodLine.match(/\d{2}\/\d{2}\/\d{4}/g) ?? [];
   const emissionMatch = normalized.match(/FECHA\s+DE\s+EMISION\s*:\s*(\d{2}\/\d{2}\/\d{4})/);
   const rawDate = periodDates.at(-1) ?? emissionMatch?.[1] ?? "";
+  const rawStartDate = periodDates[0] ?? "";
   const heating = currentReading(lines, (text) => /ENERGIA\s*\(KWH\)/.test(text));
   const water = currentReading(lines, (text) => /^\s*ACS\s*\(L\)/.test(text));
   const cooling = currentReading(lines, (text) => /REFRIGERACION\s*\(KWH\)/.test(text));
+  const fixedLine = lines.find((line) => /TERMINO\s+FIJO/.test(plain(line.text)));
+  const fixedNumbers = fixedLine ? numericCells(fixedLine) : [];
+  const fixedDailyRate = fixedNumbers.length >= 2 ? fixedNumbers[1] : null;
   const errors: string[] = [];
   if (!dwellingName) errors.push("No se encontró la vivienda");
   else if (!dwelling) errors.push(`La vivienda “${dwellingName}” no existe en el listado`);
   if (!rawDate) errors.push("No se encontró la fecha final del periodo");
+  if (!rawStartDate) errors.push("No se encontró la fecha inicial del periodo");
   if (heating === null) errors.push("No se encontró la lectura actual de energía");
   if (water === null) errors.push("No se encontró la lectura actual de ACS");
   if (cooling === null) errors.push("No se encontró la lectura actual de refrigeración");
-  return { dwellingId: dwelling?.id ?? null, dwellingName, address: addressLine, date: rawDate ? toIso(rawDate) : "", heating, water, cooling, errors };
+  if (fixedDailyRate === null) errors.push("No se encontró la tarifa de Término fijo");
+  return { dwellingId: dwelling?.id ?? null, dwellingName, address: addressLine, date: rawDate ? toIso(rawDate) : "", periodStart: rawStartDate ? toIso(rawStartDate) : "", periodEnd: rawDate ? toIso(rawDate) : "", heating, water, cooling, fixedDailyRate, errors };
 }

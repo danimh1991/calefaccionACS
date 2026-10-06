@@ -445,6 +445,34 @@ async function fixedNeighborCharges(request: Request, env: Env, path: string) {
     const [charges, suggestion] = await Promise.all([fixedNeighborChargeData(env), suggestedFixedNeighborRate(env)]);
     return json({ charges, suggestion });
   }
+  if (request.method === "POST" && path === "/api/fixed-neighbor-charges/import") {
+    const body = await request.json() as Record<string, unknown>;
+    const periodStart = text(body.periodStart, "fecha inicial del periodo");
+    const periodEnd = text(body.periodEnd, "fecha final del periodo");
+    if (periodEnd <= periodStart) throw new Error("El periodo del recibo no es válido.");
+    const dailyRate = number(body.dailyRate, "tarifa de Término fijo");
+    if (dailyRate < 0) throw new Error("La tarifa de Término fijo no puede ser negativa.");
+    const startTimestamp = Date.parse(`${periodStart}T00:00:00Z`);
+    if (!Number.isFinite(startTimestamp)) throw new Error("La fecha inicial del periodo no es válida.");
+    const effectiveFrom = new Date(startTimestamp + 86_400_000).toISOString().slice(0, 10);
+    const active = await env.DB.prepare(`SELECT id, effective_from, effective_to, daily_rate FROM fixed_neighbor_charges
+      WHERE effective_from<=? AND (effective_to IS NULL OR effective_to>=?) ORDER BY effective_from DESC LIMIT 1`)
+      .bind(effectiveFrom, effectiveFrom).first<Pick<FixedNeighborChargeRow, "id" | "effective_from" | "effective_to" | "daily_rate">>();
+    if (active && Math.abs(active.daily_rate - dailyRate) < 0.0000005) return json({ ok: true, changed: false, id: active.id });
+    const next = await env.DB.prepare("SELECT effective_from FROM fixed_neighbor_charges WHERE effective_from>? ORDER BY effective_from LIMIT 1")
+      .bind(effectiveFrom).first<{ effective_from: string }>();
+    const effectiveTo = resolveRuleEnd(periodEnd, next?.effective_from ?? null);
+    const exact = await env.DB.prepare("SELECT id FROM fixed_neighbor_charges WHERE effective_from=?").bind(effectiveFrom).first<{ id: number }>();
+    const note = `Importado de recibos PDF · periodo ${periodStart} a ${periodEnd}`;
+    const statements = [env.DB.prepare("UPDATE fixed_neighbor_charges SET effective_to=date(?, '-1 day'), updated_at=CURRENT_TIMESTAMP WHERE effective_from<? AND (effective_to IS NULL OR effective_to>=?)")
+      .bind(effectiveFrom, effectiveFrom, effectiveFrom)];
+    if (exact) statements.push(env.DB.prepare("UPDATE fixed_neighbor_charges SET effective_to=?, daily_rate=?, notes=?, updated_at=CURRENT_TIMESTAMP WHERE id=?")
+      .bind(effectiveTo, dailyRate, note, exact.id));
+    else statements.push(env.DB.prepare("INSERT INTO fixed_neighbor_charges (effective_from, effective_to, daily_rate, notes) VALUES (?, ?, ?, ?)")
+      .bind(effectiveFrom, effectiveTo, dailyRate, note));
+    const results = await env.DB.batch(statements);
+    return json({ ok: true, changed: true, id: exact?.id ?? results.at(-1)?.meta.last_row_id, effectiveFrom, effectiveTo }, { status: exact ? 200 : 201 });
+  }
   if (request.method === "POST" && path === "/api/fixed-neighbor-charges") {
     const values = parseFixedNeighborCharge(await request.json() as Record<string, unknown>);
     const adjacent = await env.DB.prepare(`SELECT id, effective_from, effective_to FROM fixed_neighbor_charges
