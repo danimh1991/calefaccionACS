@@ -78,9 +78,10 @@ export function calculateDwelling(
   inputs: PeriodInputs,
   thermalRate: number,
   days: number,
+  fixedCharged = inputs.actualFixedPerDwelling,
 ) {
   const waterM3 = usage.waterLitres / 1000;
-  const actualFixedPerDwelling = inputs.actualFixedPerDwelling;
+  const actualFixedPerDwelling = fixedCharged;
   const actual =
     usage.heating * inputs.actualHeatingRate +
     usage.cooling * inputs.actualCoolingRate +
@@ -90,5 +91,5 @@ export function calculateDwelling(
     (usage.heating + usage.cooling) * thermalRate +
     waterM3 * inputs.calculatedWaterRate +
     actualFixedPerDwelling;
-  return { ...usage, waterM3, actual, calculated, difference: calculated - actual };
+  return { ...usage, waterM3, fixedCharged: actualFixedPerDwelling, actual, calculated, difference: calculated - actual };
 }

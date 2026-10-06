@@ -1,5 +1,5 @@
 export type Dwelling = { id: number; address: string; short_name: string; sort_order: number; active: number };
-export type ReadingDate = { id: number; reading_date: string; notes: string | null };
+export type ReadingDate = { id: number; reading_date: string; notes: string | null; services: string | null };
 export type InvoiceType = { id: number; name: string; slug: string; active: number; sort_order: number };
 export type Invoice = { id: number; invoice_type: string; invoice_type_name: string; invoice_type_id: number; invoice_date: string; amount: number; description: string | null };
 export type Period = {
@@ -48,6 +48,7 @@ export type Summary = {
     currentDailyRate: number | null;
     uncoveredDays: number;
     rangesApplied: Array<{ id: number; effectiveFrom: string; effectiveTo: string | null; dailyRate: number; days: number }>;
+    source: "daily-rules" | "csv";
   };
   fixed: {
     costTotal: number;
@@ -66,5 +67,6 @@ export type Summary = {
     actual: number;
     calculated: number;
     difference: number;
+    fixedCharged: number;
   }>;
 };

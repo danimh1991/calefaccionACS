@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { api } from "../api";
 import type { Bootstrap } from "../types";
+import { ReadingCalendar } from "./ReadingCalendar";
 
 type Service = "heating" | "cooling" | "water";
 type Row = { dwelling_id: number; address: string; short_name: string; value: number | null };
@@ -20,6 +21,7 @@ export function ReadingsView({ service, title, data, token, onChanged }: { servi
   }, [service, date, token]);
 
   const unit = service === "water" ? "litros" : "kWh";
+  const markedDates = data.readingDates.filter((item) => item.services?.split(",").includes(service)).map((item) => item.reading_date);
   const showHistory = async (dwellingId: number) => {
     try { setHistory(await api<History>(`/readings/history?service=${service}&dwellingId=${dwellingId}`, token)); }
     catch (reason) { setError(reason instanceof Error ? reason.message : "No se pudo cargar el histórico."); }
@@ -34,7 +36,7 @@ export function ReadingsView({ service, title, data, token, onChanged }: { servi
     finally { setSaving(false); }
   };
 
-  return <section><header className="page-header"><div><p className="eyebrow">Entrada de datos</p><h1>{title}</h1><p>Los contadores son acumulados. El consumo del periodo se obtiene por diferencia entre dos fechas.</p></div><div className="header-actions"><label className="compact-label">Fecha de lectura<input type="date" list="reading-dates" value={date} onChange={(event) => setDate(event.target.value)} /></label><datalist id="reading-dates">{data.readingDates.map((item) => <option key={item.id} value={item.reading_date} />)}</datalist><button className="primary" onClick={save} disabled={saving}>{saving ? "Guardando…" : "Guardar lecturas"}</button></div></header>
+  return <section><header className="page-header"><div><p className="eyebrow">Entrada de datos</p><h1>{title}</h1><p>Los contadores son acumulados. El consumo del periodo se obtiene por diferencia entre dos fechas.</p></div><div className="header-actions"><label className="compact-label">Fecha de lectura<ReadingCalendar value={date} markedDates={markedDates} onChange={setDate} /></label><button className="primary" onClick={save} disabled={saving}>{saving ? "Guardando…" : "Guardar lecturas"}</button></div></header>
     {error && <div className="error-box">{error}</div>}{message && <div className="success-box">{message}</div>}
     <article className="panel table-panel"><div className="panel-title"><div><p className="eyebrow">{formatDate(date)}</p><h2>{rows.length} viviendas</h2></div><span className="muted">Unidad: {unit} · Pulsa una vivienda para ver su histórico</span></div><div className="reading-grid"><div className="reading-head"><span>Vivienda</span><span>Lectura acumulada</span></div>{rows.map((row, index) => <label className="reading-row" key={row.dwelling_id}><button type="button" className="dwelling-link" onClick={() => void showHistory(row.dwelling_id)}><b>{row.short_name}</b><small>{row.address}</small></button><input inputMode="decimal" type="number" min="0" step="1" value={row.value ?? ""} onChange={(event) => setRows((current) => current.map((item, rowIndex) => rowIndex === index ? { ...item, value: event.target.value === "" ? null : Number(event.target.value) } : item))} /><em>{unit}</em></label>)}</div></article>
     {history && <div className="modal-backdrop" onClick={() => setHistory(null)}><article className="panel history-modal" onClick={(event) => event.stopPropagation()}><div className="panel-title"><div><p className="eyebrow">Histórico · {title.replace("Lecturas de ", "")}</p><h2>{history.dwelling.short_name}</h2><p className="muted">{history.dwelling.address}</p></div><button className="secondary" onClick={() => setHistory(null)}>Cerrar</button></div><div className="history-list">{history.rows.map((item) => <div key={item.reading_date}><span>{formatDate(item.reading_date)}</span><b>{new Intl.NumberFormat("es-ES").format(item.value)} {unit}</b></div>)}</div></article></div>}

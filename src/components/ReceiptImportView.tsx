@@ -2,13 +2,15 @@ import { useMemo, useState } from "react";
 import workerUrl from "pdfjs-dist/build/pdf.worker.min.mjs?url";
 import { api } from "../api";
 import { parseReceipt, type ParsedReceipt, type ReceiptLine } from "../receiptParser";
+import { parseReadingsCsv } from "../csvImport";
 import type { Bootstrap } from "../types";
 
-type ImportRow = ParsedReceipt & { page: number };
+type ImportRow = ParsedReceipt & { page: number; fixed: number | null; source: "pdf" | "csv" };
 type PdfTextItem = { str: string; transform: number[] };
 
 export function ReceiptImportView({ data, token, onChanged, onBack }: { data: Bootstrap; token: string; onChanged: () => void; onBack: () => void }) {
   const [rows, setRows] = useState<ImportRow[]>([]); const [fileName, setFileName] = useState("");
+  const [source, setSource] = useState<"pdf" | "csv" | null>(null);
   const [progress, setProgress] = useState(""); const [error, setError] = useState(""); const [message, setMessage] = useState(""); const [saving, setSaving] = useState(false);
   const activeDwellings = data.dwellings.filter((item) => item.active);
   const uniqueDwellingIds = new Set(rows.map((row) => row.dwellingId).filter((id): id is number => id !== null));
@@ -22,7 +24,7 @@ export function ReceiptImportView({ data, token, onChanged, onBack }: { data: Bo
   const ready = rows.length > 0 && invalid.length === 0 && missing.length === 0 && duplicates.size === 0;
 
   const readPdf = async (file: File) => {
-    setFileName(file.name); setRows([]); setError(""); setMessage(""); setProgress("Abriendo el PDF…");
+    setSource("pdf"); setFileName(file.name); setRows([]); setError(""); setMessage(""); setProgress("Abriendo el PDF…");
     try {
       const { GlobalWorkerOptions, getDocument } = await import("pdfjs-dist");
       GlobalWorkerOptions.workerSrc = workerUrl;
@@ -33,14 +35,28 @@ export function ReceiptImportView({ data, token, onChanged, onBack }: { data: Bo
         const page = await document.getPage(pageNumber);
         const content = await page.getTextContent();
         const lines = groupLines(content.items.filter((item): item is typeof item & PdfTextItem => "str" in item && "transform" in item).map((item) => ({ str: item.str, x: item.transform[4], y: item.transform[5] })));
-        if (!lines.length) parsed.push({ page: pageNumber, dwellingId: null, dwellingName: "", address: "", date: "", heating: null, water: null, cooling: null, errors: ["La página no contiene texto seleccionable"] });
-        else parsed.push({ page: pageNumber, ...parseReceipt(lines, activeDwellings) });
+        if (!lines.length) parsed.push({ page: pageNumber, dwellingId: null, dwellingName: "", address: "", date: "", heating: null, water: null, cooling: null, fixed: null, source: "pdf", errors: ["La página no contiene texto seleccionable"] });
+        else parsed.push({ page: pageNumber, ...parseReceipt(lines, activeDwellings), fixed: null, source: "pdf" });
       }
       const counts = new Map<string, number>();
       parsed.forEach((row) => { if (!row.dwellingId || !row.date) return; const key = `${row.dwellingId}:${row.date}`; counts.set(key, (counts.get(key) ?? 0) + 1); });
       parsed.forEach((row) => { if (row.dwellingId && row.date && (counts.get(`${row.dwellingId}:${row.date}`) ?? 0) > 1) row.errors.push("Vivienda repetida para la misma fecha"); });
       setRows(parsed); setProgress("");
     } catch (reason) { setProgress(""); setError(reason instanceof Error ? reason.message : "No se pudo leer el PDF."); }
+  };
+
+  const readCsv = async (file: File) => {
+    setSource("csv"); setFileName(file.name); setRows([]); setError(""); setMessage(""); setProgress("Leyendo el CSV…");
+    try {
+      const parsed = parseReadingsCsv(await file.text(), activeDwellings).map((row) => ({
+        page: row.line, dwellingId: row.dwellingId, dwellingName: row.dwellingName, address: "", date: row.date,
+        heating: row.heating, water: row.water, cooling: row.cooling, fixed: row.fixed, source: "csv" as const, errors: row.errors,
+      }));
+      const counts = new Map<string, number>();
+      parsed.forEach((row) => { if (row.dwellingId && row.date) counts.set(`${row.dwellingId}:${row.date}`, (counts.get(`${row.dwellingId}:${row.date}`) ?? 0) + 1); });
+      parsed.forEach((row) => { if (row.dwellingId && row.date && (counts.get(`${row.dwellingId}:${row.date}`) ?? 0) > 1) row.errors.push("Vivienda repetida para la misma fecha"); });
+      setRows(parsed); setProgress("");
+    } catch (reason) { setProgress(""); setError(reason instanceof Error ? reason.message : "No se pudo leer el CSV."); }
   };
 
   const save = async () => {
@@ -56,17 +72,18 @@ export function ReceiptImportView({ data, token, onChanged, onBack }: { data: Bo
           saveService("cooling", date, dateRows, token),
         ]);
       }
-      setMessage(`${rows.length} recibos importados y ${rows.length * 3} lecturas guardadas.`); onChanged();
+      if (source === "csv") await api("/imported-fixed-charges", token, { method: "PUT", body: JSON.stringify({ rows: rows.map((row) => ({ dwellingId: row.dwellingId, date: row.date, amount: row.fixed })) }) });
+      setMessage(`${rows.length} registros importados, ${rows.length * 3} lecturas guardadas${source === "csv" ? ` y ${rows.length} importes fijos registrados` : ""}.`); onChanged();
     } catch (reason) { setError(reason instanceof Error ? reason.message : "No se pudieron guardar las lecturas."); }
     finally { setSaving(false); }
   };
 
-  return <section><header className="page-header"><div><p className="eyebrow">Resumen del periodo · Entrada de datos</p><h1>Importar recibos PDF</h1><p>Lee una página por vivienda y prepara las lecturas actuales de Energía, ACS y Refrigeración. El PDF se procesa en este navegador y no se almacena.</p></div><div className="header-actions"><button className="secondary" onClick={onBack}>Volver al resumen</button><label className="file-button">Seleccionar PDF<input type="file" accept="application/pdf,.pdf" onChange={(event) => { const file = event.target.files?.[0]; if (file) void readPdf(file); event.target.value = ""; }} /></label></div></header>
+  return <section><header className="page-header"><div><p className="eyebrow">Resumen del periodo · Entrada de datos</p><h1>Importar lecturas</h1><p>Usa el PDF habitual o un CSV con la cabecera <code>fecha;piso;calefaccion;frio;agua;fijo</code>. Los archivos se procesan en este navegador y no se almacenan.</p></div><div className="header-actions"><button className="secondary" onClick={onBack}>Volver al resumen</button><label className="file-button secondary-file">Seleccionar CSV<input type="file" accept="text/csv,.csv" onChange={(event) => { const file = event.target.files?.[0]; if (file) void readCsv(file); event.target.value = ""; }} /></label><label className="file-button">Seleccionar PDF<input type="file" accept="application/pdf,.pdf" onChange={(event) => { const file = event.target.files?.[0]; if (file) void readPdf(file); event.target.value = ""; }} /></label></div></header>
     {progress && <div className="loading-line">{progress}</div>}{error && <div className="error-box">{error}</div>}{message && <div className="success-box">{message}</div>}
-    {!rows.length && !progress && <article className="panel import-empty"><div className="import-icon">PDF</div><h2>Selecciona el PDF completo</h2><p>Para cada página se usará la fecha final del periodo y la columna “Actual” del cuadro “Detalle de consumo”.</p></article>}
+    {!rows.length && !progress && <article className="panel import-empty"><div className="import-choice-icons"><div className="import-icon csv-icon">CSV</div><div className="import-icon">PDF</div></div><h2>Selecciona un PDF o un CSV</h2><p>El PDF toma las lecturas del “Detalle de consumo”. El CSV importa las tres lecturas acumuladas y el fijo realmente facturado a cada vivienda.</p></article>}
     {rows.length > 0 && <><div className="import-metrics"><article className="metric-card"><p>Archivo</p><strong>{fileName}</strong><span>{rows.length} páginas leídas</span></article><article className="metric-card calculated"><p>Viviendas correctas</p><strong>{rows.length - invalid.length}</strong><span>de {activeDwellings.length} esperadas</span></article><article className={`metric-card ${invalid.length || missing.length ? "actual" : "calculated"}`}><p>Revisión</p><strong>{invalid.length + missing.length}</strong><span>{invalid.length ? `${invalid.length} páginas con incidencias` : missing.length ? `${missing.length} viviendas ausentes` : "Lista para importar"}</span></article></div>
       {(invalid.length > 0 || missing.length > 0) && <div className="warning-stack"><p>No se guardará nada hasta que todas las páginas se puedan asociar correctamente.</p>{missing.length > 0 && <p>Faltan: {missing.map((item) => item.short_name).join(", ")}.</p>}</div>}
-      <article className="panel table-panel"><div className="panel-title"><div><p className="eyebrow">Revisión previa</p><h2>Lecturas detectadas</h2></div><button className="primary" disabled={!ready || saving} onClick={() => void save()}>{saving ? "Guardando…" : "Importar todas las lecturas"}</button></div><div className="table-scroll"><table className="import-table"><thead><tr><th>Página</th><th>Vivienda</th><th>Fecha</th><th>Energía actual</th><th>ACS actual</th><th>Refrigeración actual</th><th>Estado</th></tr></thead><tbody>{rows.map((row) => <tr key={row.page} className={row.errors.length ? "invalid-row" : ""}><td>{row.page}</td><td><b>{row.dwellingName || "Sin identificar"}</b><span>{row.address}</span></td><td>{row.date ? formatDate(row.date) : "—"}</td><td>{formatReading(row.heating, "kWh")}</td><td>{formatReading(row.water, "L")}</td><td>{formatReading(row.cooling, "kWh")}</td><td>{row.errors.length ? <span className="import-error">{row.errors.join(" · ")}</span> : <span className="import-ok">Correcto</span>}</td></tr>)}</tbody></table></div></article></>}
+      <article className="panel table-panel"><div className="panel-title"><div><p className="eyebrow">Revisión previa</p><h2>Lecturas detectadas</h2></div><button className="primary" disabled={!ready || saving} onClick={() => void save()}>{saving ? "Guardando…" : "Importar todos los datos"}</button></div><div className="table-scroll"><table className="import-table"><thead><tr><th>{source === "csv" ? "Línea" : "Página"}</th><th>Vivienda</th><th>Fecha</th><th>Calefacción</th><th>Frío</th><th>Agua</th>{source === "csv" && <th>Fijo facturado</th>}<th>Estado</th></tr></thead><tbody>{rows.map((row) => <tr key={row.page} className={row.errors.length ? "invalid-row" : ""}><td>{row.page}</td><td><b>{row.dwellingName || "Sin identificar"}</b><span>{row.address}</span></td><td>{row.date ? formatDate(row.date) : "—"}</td><td>{formatReading(row.heating, "kWh")}</td><td>{formatReading(row.cooling, "kWh")}</td><td>{formatReading(row.water, "L")}</td>{source === "csv" && <td>{row.fixed === null ? "—" : money.format(row.fixed)}</td>}<td>{row.errors.length ? <span className="import-error">{row.errors.join(" · ")}</span> : <span className="import-ok">Correcto</span>}</td></tr>)}</tbody></table></div></article></>}
   </section>;
 }
 
@@ -89,5 +106,6 @@ function groupLines(items: Array<{ str: string; x: number; y: number }>): Receip
 }
 
 const readingNumber = new Intl.NumberFormat("es-ES", { maximumFractionDigits: 3 });
+const money = new Intl.NumberFormat("es-ES", { style: "currency", currency: "EUR" });
 function formatReading(value: number | null, unit: string) { return value === null ? "—" : `${readingNumber.format(value)} ${unit}`; }
 function formatDate(value: string) { return new Intl.DateTimeFormat("es-ES", { dateStyle: "medium", timeZone: "UTC" }).format(new Date(`${value}T00:00:00Z`)); }

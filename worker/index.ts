@@ -114,7 +114,9 @@ function periodInputs(
 async function bootstrap(env: Env) {
   const [dwellings, dates, invoices, periods, invoiceTypes] = await Promise.all([
     env.DB.prepare("SELECT id, address, short_name, sort_order, active FROM dwellings ORDER BY sort_order").all(),
-    env.DB.prepare("SELECT id, reading_date, notes FROM reading_dates ORDER BY reading_date DESC").all(),
+    env.DB.prepare(`SELECT rd.id, rd.reading_date, rd.notes, GROUP_CONCAT(DISTINCT r.service) AS services
+      FROM reading_dates rd LEFT JOIN readings r ON r.reading_date_id=rd.id
+      GROUP BY rd.id ORDER BY rd.reading_date DESC`).all(),
     env.DB.prepare(`SELECT i.id, COALESCE(t.slug, i.invoice_type) AS invoice_type, COALESCE(t.name, i.invoice_type) AS invoice_type_name,
       i.invoice_type_id, i.invoice_date, i.amount, i.description
       FROM invoices i LEFT JOIN invoice_types t ON t.id = i.invoice_type_id
@@ -175,6 +177,24 @@ async function readingHistory(env: Env, url: URL) {
     WHERE r.dwelling_id = ? AND r.service = ? ORDER BY rd.reading_date DESC`)
     .bind(dwellingId, service).all();
   return json({ dwelling, rows: rows.results });
+}
+
+async function importedFixedCharges(request: Request, env: Env) {
+  if (request.method !== "PUT") return json({ error: "Método no permitido." }, { status: 405 });
+  const body = await request.json() as { rows?: Array<{ dwellingId?: number; date?: string; amount?: number }> };
+  const rows = body.rows ?? [];
+  if (!rows.length) throw new Error("No hay importes fijos que guardar.");
+  const parsed = rows.map((row) => ({ dwellingId: number(row.dwellingId, "vivienda"), date: text(row.date, "fecha"), amount: number(row.amount, "fijo") }));
+  if (parsed.some((row) => row.amount < 0)) throw new Error("El fijo no puede ser negativo.");
+  const statements = parsed.flatMap((row) => [
+    env.DB.prepare("INSERT INTO reading_dates (reading_date) VALUES (?) ON CONFLICT(reading_date) DO NOTHING").bind(row.date),
+    env.DB.prepare(`INSERT INTO imported_neighbor_fixed_charges (dwelling_id, reading_date_id, amount)
+      VALUES (?, (SELECT id FROM reading_dates WHERE reading_date=?), ?)
+      ON CONFLICT(dwelling_id, reading_date_id) DO UPDATE SET amount=excluded.amount, updated_at=CURRENT_TIMESTAMP`)
+      .bind(row.dwellingId, row.date, row.amount),
+  ]);
+  await env.DB.batch(statements);
+  return json({ ok: true, saved: parsed.length });
 }
 
 async function invoices(request: Request, env: Env, path: string) {
@@ -382,6 +402,24 @@ async function calculateFixedNeighborCharges(env: Env, startDate: string, endDat
       dailyRate: row.daily_rate,
       days: appliedDays,
     })),
+    source: "daily-rules" as const,
+  };
+}
+
+async function calculateImportedFixedCharges(env: Env, startDate: string, endDate: string, dwellingCount: number) {
+  const result = await env.DB.prepare(`SELECT c.dwelling_id, SUM(c.amount) AS amount
+    FROM imported_neighbor_fixed_charges c JOIN reading_dates rd ON rd.id=c.reading_date_id
+    JOIN dwellings d ON d.id=c.dwelling_id
+    WHERE d.active=1 AND rd.reading_date>? AND rd.reading_date<=?
+    GROUP BY c.dwelling_id`).bind(startDate, endDate).all<{ dwelling_id: number; amount: number }>();
+  if (!result.results.length) return null;
+  const byDwelling = new Map(result.results.map((row) => [row.dwelling_id, Number(row.amount)]));
+  const revenue = [...byDwelling.values()].reduce((sum, amount) => sum + amount, 0);
+  const days = Math.round((Date.parse(`${endDate}T00:00:00Z`) - Date.parse(`${startDate}T00:00:00Z`)) / 86_400_000);
+  return {
+    byDwelling, perDwellingTotal: dwellingCount ? revenue / dwellingCount : 0, revenue,
+    averageDailyRate: days && dwellingCount ? revenue / dwellingCount / days : 0,
+    currentDailyRate: null, uncoveredDays: Math.max(0, dwellingCount - byDwelling.size), rangesApplied: [], source: "csv" as const,
   };
 }
 
@@ -623,19 +661,21 @@ async function summary(env: Env, id: number) {
     cooling: usage.reduce((sum, item) => sum + item.cooling, 0),
     water: usage.reduce((sum, item) => sum + item.waterLitres, 0),
   };
-  const [fixed, fixedCharge] = await Promise.all([
+  const [fixed, configuredFixedCharge, importedFixedCharge] = await Promise.all([
     calculateFixedCosts(env, period.start_date, period.end_date),
     calculateFixedNeighborCharges(env, period.start_date, readingRange.end_date, totals.dwellings),
+    calculateImportedFixedCharges(env, period.start_date, readingRange.end_date, totals.dwellings),
   ]);
+  const fixedCharge = importedFixedCharge ?? configuredFixedCharge;
   const inputs = periodInputs(period, totals, fixed, fixedCharge);
   const result = calculatePeriod(inputs);
-  const rows = usage.map((item) => calculateDwelling(item, inputs, result.calculatedThermalRate, result.days));
+  const rows = usage.map((item) => calculateDwelling(item, inputs, result.calculatedThermalRate, result.days, importedFixedCharge?.byDwelling.get(item.dwellingId)));
   const warnings: string[] = [];
   if (readingRange.start_date === readingRange.end_date) warnings.push("Solo hay una fecha de lectura dentro del periodo; los consumos se muestran a cero hasta que exista otra lectura.");
   if (missing.length) warnings.push(`Hay lecturas incompletas en ${missing.length} viviendas (${missing.join(", ")}); los consumos que no pueden calcularse se muestran a cero.`);
   const uncovered = fixed.breakdown.filter((item) => item.uncoveredDays > 0);
   if (uncovered.length) warnings.push(`Hay conceptos fijos sin regla durante parte del periodo: ${uncovered.map((item) => item.name).join(", ")}.`);
-  if (fixedCharge.uncoveredDays) warnings.push(`Falta una tarifa de fijo cobrado para ${fixedCharge.uncoveredDays} días del periodo.`);
+  if (fixedCharge.uncoveredDays) warnings.push(fixedCharge.source === "csv" ? `Falta el fijo importado por CSV para ${fixedCharge.uncoveredDays} viviendas.` : `Falta una tarifa de fijo cobrado para ${fixedCharge.uncoveredDays} días del periodo.`);
   if (result.thermalUsage === 0) warnings.push("No hay consumo térmico para absorber el saldo restante.");
   return json({
     period,
@@ -656,6 +696,7 @@ async function api(request: Request, env: Env, url: URL) {
   if (path === "/api/bootstrap" && request.method === "GET") return bootstrap(env);
   if (path === "/api/readings/history" && request.method === "GET") return readingHistory(env, url);
   if (path === "/api/readings") return readings(request, env, url);
+  if (path === "/api/imported-fixed-charges") return importedFixedCharges(request, env);
   if (path === "/api/invoices" || path.startsWith("/api/invoices/")) return invoices(request, env, path);
   if (path === "/api/invoice-types" || path.startsWith("/api/invoice-types/")) return invoiceTypes(request, env, path);
   if (path === "/api/fixed-concepts" || path.startsWith("/api/fixed-concepts/")) return fixedConcepts(request, env, path);
