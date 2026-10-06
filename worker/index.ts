@@ -1,4 +1,5 @@
 import { calculateDwelling, calculatePeriod, type DwellingUsage, type PeriodInputs } from "../shared/calculations";
+import { resolveRuleEnd } from "../shared/ranges";
 
 type Env = {
   DB: D1Database;
@@ -408,17 +409,22 @@ async function fixedNeighborCharges(request: Request, env: Env, path: string) {
   }
   if (request.method === "POST" && path === "/api/fixed-neighbor-charges") {
     const values = parseFixedNeighborCharge(await request.json() as Record<string, unknown>);
-    const overlaps = await env.DB.prepare(`SELECT id, effective_from, effective_to FROM fixed_neighbor_charges
-      WHERE effective_from <= COALESCE(?, '9999-12-31')
-        AND COALESCE(effective_to, '9999-12-31') >= ? ORDER BY effective_from`).bind(values.effectiveTo, values.effectiveFrom).all<Pick<FixedNeighborChargeRow, "id" | "effective_from" | "effective_to">>();
-    const previousOpenRange = overlaps.results.length === 1 && overlaps.results[0].effective_to === null && overlaps.results[0].effective_from < values.effectiveFrom
-      ? overlaps.results[0] : null;
-    if (overlaps.results.length && !previousOpenRange) throw new Error("Ese rango se solapa con otro fijo cobrado. Ajusta las fechas antes de guardarlo.");
-    if (previousOpenRange) await env.DB.prepare("UPDATE fixed_neighbor_charges SET effective_to=date(?, '-1 day'), updated_at=CURRENT_TIMESTAMP WHERE id=?")
-      .bind(values.effectiveFrom, previousOpenRange.id).run();
-    const result = await env.DB.prepare("INSERT INTO fixed_neighbor_charges (effective_from, effective_to, daily_rate, notes) VALUES (?, ?, ?, ?)")
-      .bind(values.effectiveFrom, values.effectiveTo, values.dailyRate, values.notes).run();
-    return json({ ok: true, id: result.meta.last_row_id }, { status: 201 });
+    const adjacent = await env.DB.prepare(`SELECT id, effective_from, effective_to FROM fixed_neighbor_charges
+      WHERE effective_from = (SELECT MAX(effective_from) FROM fixed_neighbor_charges WHERE effective_from < ?)
+         OR effective_from = (SELECT MIN(effective_from) FROM fixed_neighbor_charges WHERE effective_from > ?)
+      ORDER BY effective_from`).bind(values.effectiveFrom, values.effectiveFrom).all<Pick<FixedNeighborChargeRow, "id" | "effective_from" | "effective_to">>();
+    const previous = adjacent.results.filter((item) => item.effective_from < values.effectiveFrom).at(-1);
+    const next = adjacent.results.find((item) => item.effective_from > values.effectiveFrom);
+    const effectiveTo = resolveRuleEnd(values.effectiveTo, next?.effective_from ?? null);
+    const statements = [];
+    if (previous && (!previous.effective_to || previous.effective_to >= values.effectiveFrom)) {
+      statements.push(env.DB.prepare("UPDATE fixed_neighbor_charges SET effective_to=date(?, '-1 day'), updated_at=CURRENT_TIMESTAMP WHERE id=?")
+        .bind(values.effectiveFrom, previous.id));
+    }
+    statements.push(env.DB.prepare("INSERT INTO fixed_neighbor_charges (effective_from, effective_to, daily_rate, notes) VALUES (?, ?, ?, ?)")
+      .bind(values.effectiveFrom, effectiveTo, values.dailyRate, values.notes));
+    const results = await env.DB.batch(statements);
+    return json({ ok: true, id: results.at(-1)?.meta.last_row_id }, { status: 201 });
   }
   const match = path.match(/^\/api\/fixed-neighbor-charges\/(\d+)$/);
   if (!match) return json({ error: "Tramo de fijo cobrado no encontrado." }, { status: 404 });
@@ -500,15 +506,19 @@ async function fixedRules(request: Request, env: Env, path: string) {
     const valid = await env.DB.prepare(`SELECT id FROM fixed_concepts WHERE active=1 AND calculation_mode='simple' AND id IN (${placeholders})`)
       .bind(...parsed.map((row) => row.conceptId)).all<{ id: number }>();
     if (new Set(valid.results.map((row) => row.id)).size !== parsed.length) throw new Error("Alguna subcategoría ya no está disponible.");
-    const statements = parsed.flatMap((row) => [
-      env.DB.prepare("UPDATE fixed_concept_rules SET effective_to=date(?, '-1 day'), updated_at=CURRENT_TIMESTAMP WHERE concept_id=? AND effective_from < ? AND (effective_to IS NULL OR effective_to >= ?)")
-        .bind(effectiveFrom, row.conceptId, effectiveFrom, effectiveFrom),
-      env.DB.prepare(`INSERT INTO fixed_concept_rules (concept_id, effective_from, effective_to, amount, frequency, vat_rate, notes)
+    const existingRules = await env.DB.prepare(`SELECT concept_id, effective_from FROM fixed_concept_rules
+      WHERE concept_id IN (${placeholders}) ORDER BY concept_id, effective_from`)
+      .bind(...parsed.map((row) => row.conceptId)).all<{ concept_id: number; effective_from: string }>();
+    const statements = parsed.flatMap((row) => {
+      const nextStart = existingRules.results.find((item) => item.concept_id === row.conceptId && item.effective_from > effectiveFrom)?.effective_from ?? null;
+      const resolvedEnd = resolveRuleEnd(effectiveTo, nextStart);
+      return [env.DB.prepare("UPDATE fixed_concept_rules SET effective_to=date(?, '-1 day'), updated_at=CURRENT_TIMESTAMP WHERE concept_id=? AND effective_from < ? AND (effective_to IS NULL OR effective_to >= ?)")
+        .bind(effectiveFrom, row.conceptId, effectiveFrom, effectiveFrom), env.DB.prepare(`INSERT INTO fixed_concept_rules (concept_id, effective_from, effective_to, amount, frequency, vat_rate, notes)
         VALUES (?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(concept_id, effective_from) DO UPDATE SET effective_to=excluded.effective_to, amount=excluded.amount,
         frequency=excluded.frequency, vat_rate=excluded.vat_rate, notes=excluded.notes, updated_at=CURRENT_TIMESTAMP`)
-        .bind(row.conceptId, effectiveFrom, effectiveTo, row.amount, row.frequency, row.vatRate, row.notes),
-    ]);
+        .bind(row.conceptId, effectiveFrom, resolvedEnd, row.amount, row.frequency, row.vatRate, row.notes)];
+    });
     await env.DB.batch(statements);
     return json({ ok: true, saved: parsed.length });
   }
@@ -516,6 +526,9 @@ async function fixedRules(request: Request, env: Env, path: string) {
     const values = parseRule(await request.json() as Record<string, unknown>);
     const concept = await env.DB.prepare("SELECT calculation_mode FROM fixed_concepts WHERE id=? AND active=1").bind(values.concept_id).first<{ calculation_mode: string }>();
     if (!concept || concept.calculation_mode !== "simple") throw new Error("Añade la regla a un concepto simple o a un subconcepto.");
+    const next = await env.DB.prepare("SELECT effective_from FROM fixed_concept_rules WHERE concept_id=? AND effective_from>? ORDER BY effective_from LIMIT 1")
+      .bind(values.concept_id, values.effective_from).first<{ effective_from: string }>();
+    const effectiveTo = resolveRuleEnd(values.effective_to, next?.effective_from ?? null);
     await env.DB.prepare("UPDATE fixed_concept_rules SET effective_to=date(?, '-1 day'), updated_at=CURRENT_TIMESTAMP WHERE concept_id=? AND effective_from < ? AND (effective_to IS NULL OR effective_to >= ?)")
       .bind(values.effective_from, values.concept_id, values.effective_from, values.effective_from).run();
     const result = await env.DB.prepare(`INSERT INTO fixed_concept_rules
@@ -523,7 +536,7 @@ async function fixedRules(request: Request, env: Env, path: string) {
       VALUES (?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(concept_id, effective_from) DO UPDATE SET effective_to=excluded.effective_to, amount=excluded.amount,
       frequency=excluded.frequency, vat_rate=excluded.vat_rate, notes=excluded.notes, updated_at=CURRENT_TIMESTAMP`)
-      .bind(...Object.values(values)).run();
+      .bind(values.concept_id, values.effective_from, effectiveTo, values.amount, values.frequency, values.vat_rate, values.notes).run();
     return json({ ok: true, id: result.meta.last_row_id }, { status: 201 });
   }
   const match = path.match(/^\/api\/fixed-rules\/(\d+)$/);

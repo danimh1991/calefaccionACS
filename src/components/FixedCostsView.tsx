@@ -51,13 +51,13 @@ export function FixedCostsView({ token }: { token: string }) {
   };
   const saveRule = async (event: React.FormEvent) => {
     event.preventDefault(); setError("");
-    try { await api("/fixed-rules/batch", token, { method: "POST", body: JSON.stringify({ ...ruleDates, rows: ruleRows }) }); setRuleGroupId(""); setRuleDates({ effectiveFrom: "", effectiveTo: "" }); setRuleRows([]); success(`${ruleRows.length} ${ruleRows.length === 1 ? "regla guardada" : "reglas guardadas"}. Los periodos usarán la vigencia indicada.`); } catch (reason) { showError(reason); }
+    try { await api("/fixed-rules/batch", token, { method: "POST", body: JSON.stringify({ ...ruleDates, rows: ruleRows }) }); setRuleGroupId(""); setRuleDates({ effectiveFrom: "", effectiveTo: "" }); setRuleRows([]); success(`${ruleRows.length} ${ruleRows.length === 1 ? "regla guardada" : "reglas guardadas"}. La regla anterior se ha cerrado automáticamente cuando correspondía.`); } catch (reason) { showError(reason); }
   };
   const editRule = (rule: FixedRule) => { const concept = concepts.find((item) => item.id === rule.concept_id); selectRuleGroup(String(concept?.parent_id ?? concept?.id ?? ""), rule.effective_from); window.scrollTo({ top: 0, behavior: "smooth" }); };
   const removeRule = async (rule: FixedRule) => { if (!confirm("¿Eliminar esta regla de precio?")) return; try { await api(`/fixed-rules/${rule.id}`, token, { method: "DELETE" }); success("Regla eliminada."); } catch (reason) { showError(reason); } };
   const saveCharge = async (event: React.FormEvent) => {
     event.preventDefault(); setError("");
-    try { await api(chargeEdit ? `/fixed-neighbor-charges/${chargeEdit}` : "/fixed-neighbor-charges", token, { method: chargeEdit ? "PUT" : "POST", body: JSON.stringify(chargeForm) }); setChargeForm(emptyCharge); setChargeEdit(null); success("Fijo cobrado guardado. Los resúmenes aplicarán cada precio según sus fechas."); } catch (reason) { showError(reason); }
+    try { await api(chargeEdit ? `/fixed-neighbor-charges/${chargeEdit}` : "/fixed-neighbor-charges", token, { method: chargeEdit ? "PUT" : "POST", body: JSON.stringify(chargeForm) }); setChargeForm(emptyCharge); setChargeEdit(null); success("Fijo cobrado guardado. El tramo anterior se ha cerrado automáticamente cuando correspondía."); } catch (reason) { showError(reason); }
   };
   const editCharge = (charge: FixedNeighborCharge) => { setChargeEdit(charge.id); setChargeForm({ effectiveFrom: charge.effective_from, effectiveTo: charge.effective_to ?? "", dailyRate: String(charge.daily_rate), notes: charge.notes ?? "" }); };
   const removeCharge = async (charge: FixedNeighborCharge) => { if (!confirm("¿Eliminar este tramo de fijo cobrado? Los días sin tarifa quedarán señalados en el resumen.")) return; try { await api(`/fixed-neighbor-charges/${charge.id}`, token, { method: "DELETE" }); success("Tramo de fijo cobrado eliminado."); } catch (reason) { showError(reason); } };
