@@ -547,6 +547,20 @@ async function summary(env: Env, id: number) {
   const period = await env.DB.prepare("SELECT * FROM periods WHERE id = ?").bind(id).first<PeriodRow>();
   if (!period) return json({ error: "Periodo no encontrado." }, { status: 404 });
 
+  const readingRange = await env.DB.prepare(`
+    SELECT MIN(rd.reading_date) AS start_date, MAX(rd.reading_date) AS end_date
+    FROM reading_dates rd
+    WHERE rd.reading_date BETWEEN ? AND ?
+      AND EXISTS (
+        SELECT 1 FROM readings r
+        JOIN dwellings d ON d.id = r.dwelling_id
+        WHERE r.reading_date_id = rd.id AND d.active = 1
+      )
+  `).bind(period.start_date, period.end_date).first<{ start_date: string | null; end_date: string | null }>();
+  if (!readingRange?.start_date || !readingRange.end_date) {
+    return json({ error: "No hay lecturas dentro de las fechas del periodo." }, { status: 422 });
+  }
+
   const usageResult = await env.DB.prepare(`
     SELECT d.id AS dwelling_id, d.address, d.short_name,
       MAX(CASE WHEN rd.reading_date = ? AND r.service = 'heating' THEN r.value END) AS heating_start,
@@ -562,17 +576,19 @@ async function summary(env: Env, id: number) {
     GROUP BY d.id
     ORDER BY d.sort_order
   `).bind(
-    period.start_date, period.end_date,
-    period.start_date, period.end_date,
-    period.start_date, period.end_date,
-    period.start_date, period.end_date,
+    readingRange.start_date, readingRange.end_date,
+    readingRange.start_date, readingRange.end_date,
+    readingRange.start_date, readingRange.end_date,
+    readingRange.start_date, readingRange.end_date,
   ).all<Record<string, string | number | null>>();
 
   const missing: string[] = [];
   const usage: DwellingUsage[] = usageResult.results.map((row) => {
     const fields = ["heating_start", "heating_end", "cooling_start", "cooling_end", "water_start", "water_end"];
     if (fields.some((field) => row[field] === null || row[field] === undefined)) missing.push(String(row.short_name));
-    const diff = (end: string, start: string) => Number(row[end] ?? 0) - Number(row[start] ?? 0);
+    const diff = (end: string, start: string) => row[end] === null || row[end] === undefined || row[start] === null || row[start] === undefined
+      ? 0
+      : Number(row[end]) - Number(row[start]);
     return {
       dwellingId: Number(row.dwelling_id),
       address: String(row.address),
@@ -582,7 +598,6 @@ async function summary(env: Env, id: number) {
       waterLitres: diff("water_end", "water_start"),
     };
   });
-  if (missing.length) return json({ error: "Faltan lecturas de inicio o final.", missing }, { status: 422 });
   const negative = usage.filter((item) => item.heating < 0 || item.cooling < 0 || item.waterLitres < 0).map((item) => item.shortName);
   if (negative.length) return json({ error: "Hay consumos negativos; revisa los contadores.", negative }, { status: 422 });
 
@@ -603,11 +618,22 @@ async function summary(env: Env, id: number) {
   const result = calculatePeriod(inputs);
   const rows = usage.map((item) => calculateDwelling(item, inputs, result.calculatedThermalRate, result.days));
   const warnings: string[] = [];
+  if (readingRange.start_date === readingRange.end_date) warnings.push("Solo hay una fecha de lectura dentro del periodo; los consumos se muestran a cero hasta que exista otra lectura.");
+  if (missing.length) warnings.push(`Hay lecturas incompletas en ${missing.length} viviendas (${missing.join(", ")}); los consumos que no pueden calcularse se muestran a cero.`);
   const uncovered = fixed.breakdown.filter((item) => item.uncoveredDays > 0);
   if (uncovered.length) warnings.push(`Hay conceptos fijos sin regla durante parte del periodo: ${uncovered.map((item) => item.name).join(", ")}.`);
   if (fixedCharge.uncoveredDays) warnings.push(`Falta una tarifa de fijo cobrado para ${fixedCharge.uncoveredDays} días del periodo.`);
   if (result.thermalUsage === 0) warnings.push("No hay consumo térmico para absorber el saldo restante.");
-  return json({ period, totals, result, fixed, fixedCharge, warnings, rows });
+  return json({
+    period,
+    readingRange: { startDate: readingRange.start_date, endDate: readingRange.end_date },
+    totals,
+    result,
+    fixed,
+    fixedCharge,
+    warnings,
+    rows,
+  });
 }
 
 async function api(request: Request, env: Env, url: URL) {

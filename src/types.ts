@@ -25,6 +25,7 @@ export type FixedNeighborCharge = { id: number; effective_from: string; effectiv
 export type FixedConcept = { id: number; name: string; parent_id: number | null; parent_name: string | null; calculation_mode: "simple" | "separate"; cost_treatment: "included" | "additional"; notes: string | null; active: number; sort_order: number; rules: FixedRule[] };
 export type Summary = {
   period: Period;
+  readingRange: { startDate: string; endDate: string };
   totals: { dwellings: number; invoices: number; heating: number; cooling: number; water: number };
   result: {
     days: number;
