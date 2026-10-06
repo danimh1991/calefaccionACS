@@ -612,7 +612,7 @@ async function summary(env: Env, id: number) {
   };
   const [fixed, fixedCharge] = await Promise.all([
     calculateFixedCosts(env, period.start_date, period.end_date),
-    calculateFixedNeighborCharges(env, period.start_date, period.end_date, totals.dwellings),
+    calculateFixedNeighborCharges(env, period.start_date, readingRange.end_date, totals.dwellings),
   ]);
   const inputs = periodInputs(period, totals, fixed, fixedCharge);
   const result = calculatePeriod(inputs);
