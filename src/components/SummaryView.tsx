@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { api, ApiError } from "../api";
 import type { Bootstrap, Period, Summary } from "../types";
+import { createLiquidationCsv, liquidationFileName } from "../liquidationCsv";
 
 const money = new Intl.NumberFormat("es-ES", { style: "currency", currency: "EUR" });
 const number = new Intl.NumberFormat("es-ES", { maximumFractionDigits: 2 });
@@ -22,7 +23,7 @@ export function SummaryView({ data, token, onChanged, onImport, onFixed }: Props
     }).finally(() => setLoading(false));
   }, [period?.id, token]);
   if (!period) return <EmptyPeriods token={token} onChanged={onChanged} />;
-  return <section><header className="page-header"><div><p className="eyebrow">Liquidación comunitaria</p><h1>Resumen del periodo</h1><p>Compara lo cobrado a los vecinos con el coste que debía repartirse.</p></div><div className="header-actions"><label className="compact-label">Periodo<select value={period.id} onChange={(event) => setPeriodId(Number(event.target.value))}>{data.periods.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label><button className="primary" onClick={onImport}>Importar lecturas</button><button className="secondary" onClick={() => setEditing((value) => !value)}>{editing ? "Cerrar ajustes" : "Editar periodo y tarifas"}</button></div></header>{editing && <PeriodForm period={period} token={token} onSaved={() => { setEditing(false); onChanged(); }} />}{error && <div className="error-box">{error}</div>}{loading && <div className="loading-line">Calculando…</div>}{summary && <SummaryContent summary={summary} onFixed={onFixed} />}</section>;
+  return <section><header className="page-header"><div><p className="eyebrow">Liquidación comunitaria</p><h1>Resumen del periodo</h1><p>Compara lo cobrado a los vecinos con el coste que debía repartirse.</p></div><div className="header-actions"><label className="compact-label">Periodo<select value={period.id} onChange={(event) => setPeriodId(Number(event.target.value))}>{data.periods.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label><button className="secondary" disabled={!summary || loading} onClick={() => summary && downloadCsv(summary)}>Exportar CSV</button><button className="secondary" disabled={!summary || loading} onClick={() => summary && void downloadExcel(summary)}>Exportar Excel</button><button className="primary" onClick={onImport}>Importar lecturas</button><button className="secondary" onClick={() => setEditing((value) => !value)}>{editing ? "Cerrar ajustes" : "Editar periodo y tarifas"}</button></div></header>{editing && <PeriodForm period={period} token={token} onSaved={() => { setEditing(false); onChanged(); }} />}{error && <div className="error-box">{error}</div>}{loading && <div className="loading-line">Calculando…</div>}{summary && <SummaryContent summary={summary} onFixed={onFixed} />}</section>;
 }
 
 type SortKey = "shortName" | "heating" | "cooling" | "waterM3" | "actual" | "calculated" | "difference";
@@ -56,3 +57,6 @@ function EmptyPeriods({ token, onChanged }: { token: string; onChanged: () => vo
 function periodToForm(period?: Period): Record<string, string> { return period ? { name: period.name, startDate: period.start_date, endDate: period.end_date, actualHeatingRate: String(period.actual_heating_rate), actualCoolingRate: String(period.actual_cooling_rate), actualWaterRate: String(period.actual_water_rate), calculatedWaterRate: String(period.calculated_water_rate) } : { name: "", startDate: "", endDate: "", actualHeatingRate: "0.05", actualCoolingRate: "0.04", actualWaterRate: "3", calculatedWaterRate: "2.5" }; }
 function formatDate(value: string) { return new Intl.DateTimeFormat("es-ES", { day: "2-digit", month: "short", year: "numeric", timeZone: "UTC" }).format(new Date(`${value}T00:00:00Z`)); }
 function signedMoney(value: number) { return `${value >= 0 ? "+" : "−"}${money.format(Math.abs(value))}`; }
+function downloadCsv(summary: Summary) { downloadBlob(new Blob([createLiquidationCsv(summary)], { type: "text/csv;charset=utf-8" }), liquidationFileName(summary)); }
+async function downloadExcel(summary: Summary) { const { createLiquidationExcel, liquidationExcelFileName } = await import("../liquidationExcel"); downloadBlob(await createLiquidationExcel(summary), liquidationExcelFileName(summary)); }
+function downloadBlob(blob: Blob, name: string) { const url = URL.createObjectURL(blob); const link = document.createElement("a"); link.href = url; link.download = name; link.click(); setTimeout(() => URL.revokeObjectURL(url), 0); }
