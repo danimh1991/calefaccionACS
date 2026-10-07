@@ -6,8 +6,7 @@ import { ReadingsView } from "./components/ReadingsView";
 import { InvoicesView } from "./components/InvoicesView";
 import { FixedCostsView } from "./components/FixedCostsView";
 import { ReceiptImportView } from "./components/ReceiptImportView";
-
-type Tab = "summary" | "fixed" | "import" | "heating" | "water" | "cooling" | "invoices";
+import { NavigationProvider, useNavigation, type Tab } from "./navigation";
 
 const tabs: Array<{ id: Tab; label: string; eyebrow: string }> = [
   { id: "summary", label: "Resumen del periodo", eyebrow: "Cierre" },
@@ -22,7 +21,6 @@ export default function App() {
   const [token, setToken] = useState(() => sessionStorage.getItem("calefaccion-pin") ?? "");
   const [draftPin, setDraftPin] = useState("");
   const [data, setData] = useState<Bootstrap | null>(null);
-  const [tab, setTab] = useState<Tab>("summary");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
 
@@ -69,6 +67,12 @@ export default function App() {
   }
 
   const refresh = () => load(token);
+  return <NavigationProvider><AuthenticatedApp data={data} token={token} error={error} refresh={refresh} clearError={() => setError("")} /></NavigationProvider>;
+}
+
+function AuthenticatedApp({ data, token, error, refresh, clearError }: { data: Bootstrap; token: string; error: string; refresh: () => void; clearError: () => void }) {
+  const { location, navigateTab } = useNavigation();
+  const tab = location.tab;
   return (
     <div className="app-shell">
       <aside className="sidebar">
@@ -78,7 +82,7 @@ export default function App() {
         </div>
         <nav aria-label="Secciones">
           {tabs.map((item) => (
-            <button key={item.id} className={tab === item.id ? "nav-item active" : "nav-item"} onClick={() => setTab(item.id)}>
+            <button key={item.id} className={tab === item.id ? "nav-item active" : "nav-item"} onClick={() => navigateTab(item.id)}>
               <span>{item.eyebrow}</span>{item.label}
             </button>
           ))}
@@ -86,10 +90,10 @@ export default function App() {
         <div className="sidebar-foot"><span>{data.dwellings.length}</span> viviendas activas</div>
       </aside>
       <main className="content">
-        {error && <div className="error-box global">{error}<button onClick={() => setError("")}>Cerrar</button></div>}
-        {tab === "summary" && <SummaryView data={data} token={token} onChanged={refresh} onImport={() => setTab("import")} onFixed={() => setTab("fixed")} />}
+        {error && <div className="error-box global">{error}<button onClick={clearError}>Cerrar</button></div>}
+        {tab === "summary" && <SummaryView data={data} token={token} onChanged={refresh} onImport={() => navigateTab("import")} onFixed={() => navigateTab("fixed")} />}
         {tab === "fixed" && <FixedCostsView token={token} />}
-        {tab === "import" && <ReceiptImportView data={data} token={token} onChanged={refresh} onBack={() => setTab("summary")} />}
+        {tab === "import" && <ReceiptImportView data={data} token={token} onChanged={refresh} onBack={() => window.history.back()} />}
         {tab === "heating" && <ReadingsView service="heating" title="Lecturas de calefacción" data={data} token={token} onChanged={refresh} />}
         {tab === "water" && <ReadingsView service="water" title="Lecturas de agua" data={data} token={token} onChanged={refresh} />}
         {tab === "cooling" && <ReadingsView service="cooling" title="Lecturas de frío" data={data} token={token} onChanged={refresh} />}

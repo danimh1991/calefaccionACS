@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { api, ApiError } from "../api";
 import type { Bootstrap, Period, Summary } from "../types";
 import { createLiquidationCsv, liquidationFileName } from "../liquidationCsv";
+import { topLayer, useNavigation } from "../navigation";
 
 const money = new Intl.NumberFormat("es-ES", { style: "currency", currency: "EUR" });
 const number = new Intl.NumberFormat("es-ES", { maximumFractionDigits: 2 });
@@ -11,7 +12,9 @@ type Props = { data: Bootstrap; token: string; onChanged: () => void; onImport: 
 export function SummaryView({ data, token, onChanged, onImport, onFixed }: Props) {
   const [periodId, setPeriodId] = useState(data.periods[0]?.id ?? 0);
   const [summary, setSummary] = useState<Summary | null>(null);
-  const [error, setError] = useState(""); const [loading, setLoading] = useState(false); const [editing, setEditing] = useState(false);
+  const [error, setError] = useState(""); const [loading, setLoading] = useState(false);
+  const { location, pushLayer, closeLayer } = useNavigation();
+  const editing = topLayer(location)?.kind === "summary-period-edit";
   const period = useMemo(() => data.periods.find((item) => item.id === periodId) ?? data.periods[0], [data.periods, periodId]);
   useEffect(() => {
     if (!period?.id) return;
@@ -23,7 +26,7 @@ export function SummaryView({ data, token, onChanged, onImport, onFixed }: Props
     }).finally(() => setLoading(false));
   }, [period?.id, token]);
   if (!period) return <EmptyPeriods token={token} onChanged={onChanged} />;
-  return <section><header className="page-header"><div><p className="eyebrow">Liquidación comunitaria</p><h1>Resumen del periodo</h1><p>Compara lo cobrado a los vecinos con el coste que debía repartirse.</p></div><div className="header-actions"><label className="compact-label">Periodo<select value={period.id} onChange={(event) => setPeriodId(Number(event.target.value))}>{data.periods.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label><button className="secondary" disabled={!summary || loading} onClick={() => summary && downloadCsv(summary)}>Exportar CSV</button><button className="secondary" disabled={!summary || loading} onClick={() => summary && void downloadExcel(summary)}>Exportar Excel</button><button className="primary" onClick={onImport}>Importar lecturas</button><button className="secondary" onClick={() => setEditing((value) => !value)}>{editing ? "Cerrar ajustes" : "Editar periodo y tarifas"}</button></div></header>{editing && <PeriodForm period={period} token={token} onSaved={() => { setEditing(false); onChanged(); }} />}{error && <div className="error-box">{error}</div>}{loading && <div className="loading-line">Calculando…</div>}{summary && <SummaryContent summary={summary} onFixed={onFixed} />}</section>;
+  return <section><header className="page-header"><div><p className="eyebrow">Liquidación comunitaria</p><h1>Resumen del periodo</h1><p>Compara lo cobrado a los vecinos con el coste que debía repartirse.</p></div><div className="header-actions"><label className="compact-label">Periodo<select value={period.id} onChange={(event) => setPeriodId(Number(event.target.value))}>{data.periods.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label><button className="secondary" disabled={!summary || loading} onClick={() => summary && downloadCsv(summary)}>Exportar CSV</button><button className="secondary" disabled={!summary || loading} onClick={() => summary && void downloadExcel(summary)}>Exportar Excel</button><button className="primary" onClick={onImport}>Importar lecturas</button><button className="secondary" onClick={() => editing ? closeLayer("summary-period-edit") : pushLayer({ kind: "summary-period-edit" })}>{editing ? "Cerrar ajustes" : "Editar periodo y tarifas"}</button></div></header>{editing && <PeriodForm period={period} token={token} onSaved={() => { closeLayer("summary-period-edit"); onChanged(); }} />}{error && <div className="error-box">{error}</div>}{loading && <div className="loading-line">Calculando…</div>}{summary && <SummaryContent summary={summary} onFixed={onFixed} />}</section>;
 }
 
 type SortKey = "shortName" | "heating" | "cooling" | "waterM3" | "actual" | "calculated" | "difference";
