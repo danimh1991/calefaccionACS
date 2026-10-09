@@ -1,10 +1,11 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
-export type Tab = "summary" | "fixed" | "import" | "heating" | "water" | "cooling" | "invoices";
+export type Tab = "summary" | "fixed" | "import" | "heating" | "water" | "cooling" | "invoices" | "help";
 export type ReadingService = "heating" | "water" | "cooling";
 
 export type NavigationLayer =
   | { kind: "summary-period-edit" }
+  | { kind: "summary-period-create" }
   | { kind: "reading-calendar"; service: ReadingService }
   | { kind: "reading-history"; service: ReadingService; dwellingId: number }
   | { kind: "fixed-concept-detail"; conceptId: number }
@@ -106,14 +107,14 @@ export function parseStoredNavigation(state: unknown): NavigationLocation | null
 function isLocation(value: unknown): value is NavigationLocation {
   if (!value || typeof value !== "object") return false;
   const candidate = value as NavigationLocation;
-  return ["summary", "fixed", "import", "heating", "water", "cooling", "invoices"].includes(candidate.tab)
+  return ["summary", "fixed", "import", "heating", "water", "cooling", "invoices", "help"].includes(candidate.tab)
     && Array.isArray(candidate.layers) && candidate.layers.every(isLayer);
 }
 
 function isLayer(value: unknown): value is NavigationLayer {
   if (!value || typeof value !== "object" || typeof (value as { kind?: unknown }).kind !== "string") return false;
   const layer = value as Record<string, unknown>;
-  if (["summary-period-edit"].includes(String(layer.kind))) return true;
+  if (["summary-period-edit", "summary-period-create"].includes(String(layer.kind))) return true;
   if (layer.kind === "reading-calendar") return ["heating", "water", "cooling"].includes(String(layer.service));
   if (layer.kind === "reading-history") return ["heating", "water", "cooling"].includes(String(layer.service)) && typeof layer.dwellingId === "number";
   if (layer.kind === "fixed-concept-detail") return typeof layer.conceptId === "number";

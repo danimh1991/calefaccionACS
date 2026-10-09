@@ -6,6 +6,7 @@ import { ReadingsView } from "./components/ReadingsView";
 import { InvoicesView } from "./components/InvoicesView";
 import { FixedCostsView } from "./components/FixedCostsView";
 import { ReceiptImportView } from "./components/ReceiptImportView";
+import { HelpView } from "./components/HelpView";
 import { NavigationProvider, useNavigation, type Tab } from "./navigation";
 
 const tabs: Array<{ id: Tab; label: string; eyebrow: string }> = [
@@ -15,6 +16,7 @@ const tabs: Array<{ id: Tab; label: string; eyebrow: string }> = [
   { id: "water", label: "Agua", eyebrow: "Lecturas" },
   { id: "cooling", label: "Frío", eyebrow: "Lecturas" },
   { id: "invoices", label: "Facturas", eyebrow: "Costes" },
+  { id: "help", label: "Guía de uso", eyebrow: "Ayuda" },
 ];
 
 export default function App() {
@@ -98,6 +100,7 @@ function AuthenticatedApp({ data, token, error, refresh, clearError }: { data: B
         {tab === "water" && <ReadingsView service="water" title="Lecturas de agua" data={data} token={token} onChanged={refresh} />}
         {tab === "cooling" && <ReadingsView service="cooling" title="Lecturas de frío" data={data} token={token} onChanged={refresh} />}
         {tab === "invoices" && <InvoicesView data={data} token={token} onChanged={refresh} />}
+        {tab === "help" && <HelpView onNavigate={navigateTab} />}
       </main>
     </div>
   );

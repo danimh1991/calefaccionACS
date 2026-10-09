@@ -29,4 +29,14 @@ describe("historial de navegación", () => {
     expect(parseStoredNavigation({ [key]: { version: 1, location: { tab: "heating", layers: [{ kind: "reading-history", service: "bad", dwellingId: 12 }] } } })).toBeNull();
     expect(parseStoredNavigation({ [key]: { version: 2, location } })).toBeNull();
   });
+
+  it("reconoce la guía de uso como una sección navegable", () => {
+    const location: NavigationLocation = { tab: "help", layers: [] };
+    expect(parseStoredNavigation({ [key]: { version: 1, location } })).toEqual(location);
+  });
+
+  it("restaura la creación de un nuevo periodo como estado independiente", () => {
+    const location: NavigationLocation = { tab: "summary", layers: [{ kind: "summary-period-create" }] };
+    expect(parseStoredNavigation({ [key]: { version: 1, location } })).toEqual(location);
+  });
 });
